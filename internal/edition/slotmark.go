@@ -89,37 +89,70 @@ type Layout struct {
 	Tokens int
 }
 
-// LayoutOf is the Layout of a template text: the marks in order (ScanMarks, so a `{{ctf:`
-// that is not a mark is a *MarkError), each with the index of its token. The renderer (E3:
-// the mark of an answer or a decoy is Alone) and the validator (B7: the token at that
-// index of a bundle is the value) read the same positions from this one function.
-func LayoutOf(data []byte) (Layout, error) {
+// markedText is a template text read once for the tokens of its marks: pseudo is the text with
+// each mark one token byte, spans the tokens of pseudo, and marks every mark in order with the
+// index of the token that holds it. It is the ONE mapping from a mark to its token: LayoutOf
+// (the renderer's E3 and B7) and templateTokens (E2 of the blocks, specblocks.go) both read it.
+type markedText struct {
+	pseudo []byte
+	spans  [][2]int
+	marks  []markToken
+}
+
+// markToken is one mark of a markedText: its slot and the index of its token.
+type markToken struct {
+	slot  string
+	token int
+}
+
+// alone reports whether token ti of the text is one mark and nothing else.
+func (m markedText) alone(ti int) bool { return m.spans[ti][1]-m.spans[ti][0] == 1 }
+
+// readMarkedText is the markedText of data (ScanMarks, so a `{{ctf:` that is not a mark is a
+// *MarkError).
+func readMarkedText(data []byte) (markedText, error) {
 	parts, err := ScanMarks(data)
 	if err != nil {
-		return Layout{}, err
+		return markedText{}, err
 	}
-	// pseudo is the text with each mark one token byte, and offs where each mark is in it.
-	var pseudo []byte
+	// offs is where each mark is in pseudo.
+	var out markedText
 	var offs []int
 	var slots []string
 	for _, p := range parts {
-		pseudo = append(pseudo, p.Lit...)
+		out.pseudo = append(out.pseudo, p.Lit...)
 		if p.Slot == "" {
 			continue
 		}
-		offs = append(offs, len(pseudo))
+		offs = append(offs, len(out.pseudo))
 		slots = append(slots, p.Slot)
-		pseudo = append(pseudo, 'M')
+		out.pseudo = append(out.pseudo, 'M')
 	}
-	spans := tokenSpans(pseudo)
-	out := Layout{Tokens: len(spans)}
+	out.spans = tokenSpans(out.pseudo)
 	ti := 0
 	for i, off := range offs {
-		for ti < len(spans) && spans[ti][1] <= off {
+		for ti < len(out.spans) && out.spans[ti][1] <= off {
 			ti++
 		}
 		// The mark's byte is a token byte, so a span holds it.
-		out.Marks = append(out.Marks, MarkPosition{Slot: slots[i], Token: ti, Alone: spans[ti][1]-spans[ti][0] == 1})
+		out.marks = append(out.marks, markToken{slot: slots[i], token: ti})
+	}
+	return out, nil
+}
+
+// LayoutOf is the Layout of a template text: the marks in order (ScanMarks, so a `{{ctf:`
+// that is not a mark is a *MarkError), each with the index of its token. The renderer (E3:
+// the mark of an answer or a decoy is Alone) and the validator (B7: the token at that
+// index of a bundle is the value) read the same positions from this one function, which reads
+// them from readMarkedText (the one mapping, which E2 of the blocks reads too).
+func LayoutOf(data []byte) (Layout, error) {
+	mt, err := readMarkedText(data)
+	if err != nil {
+		return Layout{}, err
+	}
+	out := Layout{Tokens: len(mt.spans)}
+	for _, m := range mt.marks {
+		out.Marks = append(out.Marks, MarkPosition{Slot: m.slot, Token: m.token, Alone: mt.alone(m.token)})
 	}
 	return out, nil
 }

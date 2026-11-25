@@ -14,11 +14,19 @@ package edition
 //	    decoys: <n>                  # answer only, 1..MaxDecoys: makes <name>-d1 .. <name>-d<n>
 //	    vocab: [[word, ...], ...]    # path and name questions only
 //	    window: {from: <s>, to: <s>} # timestamp questions only; half-open, seconds from time.base
+//	    clues: [<word>, ...]         # answer only, optional: literal words of the template
 //	  - name: <slot>
 //	    role: filler
 //	    format: <path | name | hexid | timestamp>
 //	    length: <n>                  # a hexid filler only
 //	    vocab / window               # as the format needs
+//	blocks:                          # optional (amendment 28): line ranges of template files
+//	  - {file: <name>, from: <line>, to: <line>}  # 1-based, both lines included
+//
+// `clues` (amendment 28, B17) are the words in which the lines of an answer's group may
+// differ: how the answer is told apart. `blocks` are the ranges of lines that a render puts
+// in the order of their times (A7-x PR 2). Both are declared and checked here and in
+// specblocks.go only: the renderer does not read them yet, and B17 and B19 are later stages.
 //
 // vocab is a list of lists of words. A name has exactly one list: its value is one of the
 // words. A path has one list per path element: its value is one word of each list, joined
@@ -81,7 +89,17 @@ const (
 	// MaxFixed bounds the keys of `fixed`: one per question that cannot vary per seat, so
 	// at most the number of questions of a challenge (catalog.MaxQuestions).
 	MaxFixed = catalog.MaxQuestions
-	// SpecVersion is the one version of the schema.
+	// MaxBlocks bounds `blocks` (amendment 28). The blocks of a file do not overlap, and a
+	// template has at most MaxBundleFiles files.
+	MaxBlocks = 256
+	// MaxClues bounds the clues of one answer slot, and MaxClueBytes one clue: the longest
+	// path the path format takes (a clue is one token, and a path is the longest token a
+	// value of a format can be).
+	MaxClues     = 16
+	MaxClueBytes = 255
+	// SpecVersion is the one version of the schema. `blocks` and `clues` did not raise it:
+	// an image older than them refuses a file that has them (the decode is strict), so a new
+	// file is never read by an old image as if it had no blocks.
 	SpecVersion = 1
 )
 
@@ -99,6 +117,7 @@ type Spec struct {
 	Time            SpecTime          `yaml:"time"`
 	Fixed           map[string]string `yaml:"fixed"`
 	Slots           []Slot            `yaml:"slots"`
+	Blocks          []Block           `yaml:"blocks"`
 	// Version is SpecVersion in a parsed Spec.
 	Version int `yaml:"-"`
 	// ImpliedDecoys are the decoy slots of every answer slot, in the order of the answer
@@ -121,6 +140,14 @@ type Window struct {
 	To   *int64 `yaml:"to"`
 }
 
+// Block is one entry of `blocks` (ADR-0056 amendment 28): the lines From..To of the
+// template file File, 1-based and both included.
+type Block struct {
+	File string `yaml:"file"`
+	From *int   `yaml:"from"`
+	To   *int   `yaml:"to"`
+}
+
 // Slot is one slot, as declared, or one implied decoy (DecoyOf is not empty).
 type Slot struct {
 	Name     string     `yaml:"name"`
@@ -131,6 +158,9 @@ type Slot struct {
 	Length   *int       `yaml:"length"`
 	Vocab    [][]string `yaml:"vocab"`
 	Window   *Window    `yaml:"window"`
+	// Clues are an answer slot's literal words of the template in which the lines of its
+	// group may differ (amendment 28, B17). An implied decoy has none: B17 reads its answer's.
+	Clues []string `yaml:"clues"`
 	// DecoyOf is the name of the answer slot an implied decoy comes from; empty for a
 	// declared slot.
 	DecoyOf string `yaml:"-"`
@@ -178,9 +208,14 @@ func decoyName(name string, j int) string { return fmt.Sprintf("%s-d%d", name, j
 //     precision;
 //   - a vocab is 1..MaxVocabPositions lists (a name filler: exactly one) of 1..MaxVocabWords
 //     words, every word in the normalised form of the format (an answer slot's: of a path
-//     element), no word twice in a list, and the longest path it can make fits.
+//     element), no word twice in a list, and the longest path it can make fits;
+//   - `clues` is an answer slot's: at most MaxClues words, each of 1..MaxClueBytes bytes that
+//     are all token bytes (B7's TOKEN, so no space and no control character), none twice;
+//   - `blocks` has at most MaxBlocks entries, each a file name of B2's grammar and lines
+//     1 <= from <= to, and two blocks of one file do not overlap.
 //
-// Whether the slots fit a challenge's questions is E2's, in A4d-1b.
+// Whether the slots fit a challenge's questions is E2's, in A4d-1b; whether `blocks` and
+// `clues` fit the template is E2's too, in specblocks.go.
 func ParseSpec(data []byte) (*Spec, error) {
 	shape := func(msg string, line int) error {
 		return newSpecViolation(RuleSpecShape, msg, line, "", "", "", "", nil)
@@ -339,6 +374,7 @@ func validateSpec(spec *Spec) error {
 			checkWindowEnds(spec, base, &c)
 		}
 	}
+	validateBlocks(spec.Blocks, &c)
 	if err := c.err(); err != nil {
 		return err
 	}
@@ -441,6 +477,7 @@ func validateAnswer(s *Slot, bad func(where, msg string, err error), declare fun
 		validateVocab(s, answerformat.Path, bad)
 	}
 	validateWindow(s, bad)
+	validateClues(s, bad)
 }
 
 func validateFiller(s *Slot, bad func(where, msg string, err error)) {
@@ -449,6 +486,9 @@ func validateFiller(s *Slot, bad func(where, msg string, err error)) {
 	}
 	if s.Decoys != nil {
 		bad("", "a filler has no decoys", nil)
+	}
+	if len(s.Clues) != 0 {
+		bad(".clues", "clues are an answer slot's", nil)
 	}
 	switch {
 	case !answerformat.Known(s.Format):
@@ -492,6 +532,77 @@ func noLengthNoWindow(s *Slot, bad func(where, msg string, err error)) {
 	}
 	if s.Window != nil {
 		bad("", "window is a timestamp slot's", nil)
+	}
+}
+
+// validateClues holds the clues of an answer slot to their shape (E1): at most MaxClues, each
+// one TOKEN (isTokenByte, so no space and no control character) of 1..MaxClueBytes bytes, none
+// twice. That each is a literal word of the template is E2's (specblocks.go). A message names
+// the position of a clue, never the clue.
+func validateClues(s *Slot, bad func(where, msg string, err error)) {
+	if len(s.Clues) > MaxClues {
+		bad(".clues", fmt.Sprintf("an answer slot has at most %d clues", MaxClues), nil)
+		return
+	}
+	seen := make(map[string]struct{}, len(s.Clues))
+	for i, w := range s.Clues {
+		where := fmt.Sprintf(".clues[%d]", i)
+		if len(w) == 0 || len(w) > MaxClueBytes {
+			bad(where, fmt.Sprintf("a clue is a word of 1..%d bytes", MaxClueBytes), nil)
+			continue
+		}
+		if !isTokenWord(w) {
+			bad(where, "a clue is one word of [A-Za-z0-9._:/-] (no space, no control character)", nil)
+			continue
+		}
+		if _, dup := seen[w]; dup {
+			bad(where, "a clue is repeated", nil)
+		}
+		seen[w] = struct{}{}
+	}
+}
+
+// isTokenWord reports whether every byte of w is a token byte (B7's TOKEN): w is one token.
+func isTokenWord(w string) bool {
+	for i := 0; i < len(w); i++ {
+		if !isTokenByte(w[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// validateBlocks holds `blocks` to their shape (E1): at most MaxBlocks, each a file name of
+// B2's grammar (the template's) and lines 1 <= from <= to, and no two blocks of one file
+// overlapping (a line is in one block at most, so the order of a block is well defined). That
+// the file is in the template, that the lines are in it and that every line has a time slot
+// is E2's (specblocks.go).
+func validateBlocks(blocks []Block, c *collector) {
+	bad := func(i int, file, msg string) {
+		v := newSpecViolation(RuleSpecShape, msg, 0, "", "", "", fmt.Sprintf("blocks[%d]", i), nil)
+		v.File = shownName(file)
+		c.add(v)
+	}
+	if len(blocks) > MaxBlocks {
+		c.add(newSpecViolation(RuleSpecShape, fmt.Sprintf("edition.yaml declares more than %d blocks", MaxBlocks), 0, "", "", "", "blocks", nil))
+		return
+	}
+	ranged := func(b Block) bool { return b.From != nil && b.To != nil && *b.From >= 1 && *b.From <= *b.To }
+	for i, b := range blocks {
+		if !ValidFileName(b.File) {
+			bad(i, b.File, "a block's file is outside the grammar "+NamePattern)
+		}
+		if !ranged(b) {
+			bad(i, b.File, "a block needs from and to with 1 <= from <= to (line numbers of its file)")
+			continue
+		}
+		for j := 0; j < i; j++ {
+			p := blocks[j]
+			if p.File == b.File && ranged(p) && *b.From <= *p.To && *p.From <= *b.To {
+				bad(i, b.File, fmt.Sprintf("the block overlaps blocks[%d] of the same file", j))
+				break
+			}
+		}
 	}
 }
 

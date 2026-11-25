@@ -133,6 +133,14 @@ func TestCheckQuestions_Refusals(t *testing.T) {
 		{"a timestamp question with no window", g.with(slotWhen, func(s *specSlot) { s.window = "" }), specQuestions, []string{"E2"}},
 		{"a timestamp question with a vocabulary", g.with(slotWhen, func(s *specSlot) { s.vocab = specVocab(specWords("h", 3)) }), specQuestions, []string{"E2"}},
 
+		// amendment 28 (c): a filler of one value is a literal.
+		{"a name filler of one word", g.with(slotOther, func(s *specSlot) { s.vocab = specVocab(specWords("n", 1)) }), specQuestions, []string{"E2"}},
+		{"a name filler of two words", g.with(slotOther, func(s *specSlot) { s.vocab = specVocab(specWords("n", 2)) }), specQuestions, nil},
+		{"a path filler of one word at every position", g.with(slotOther, func(s *specSlot) { s.format = "path"; s.vocab = specVocab("[srv]", "[x]") }), specQuestions, []string{"E2"}},
+		{"a path filler with a position of two words", g.with(slotOther, func(s *specSlot) { s.format = "path"; s.vocab = specVocab("[srv]", "[x, y]") }), specQuestions, nil},
+		{"a timestamp filler of a one-second window", g.with(slotOther, func(s *specSlot) { s.format, s.vocab, s.window = "timestamp", "", "{from: 10, to: 11}" }), specQuestions, []string{"E2"}},
+		{"a timestamp filler of a two-second window", g.with(slotOther, func(s *specSlot) { s.format, s.vocab, s.window = "timestamp", "", "{from: 10, to: 12}" }), specQuestions, nil},
+
 		// B8 (a), to the unit (V6's edition side).
 		{"a name vocabulary of 199 words (2 attempts)", g.with(slotWho, wordsDoc("w", 199)), specQuestions, []string{"B8"}},
 		{"a name vocabulary of 200 words (2 attempts)", g.with(slotWho, wordsDoc("w", 200)), specQuestions, nil},

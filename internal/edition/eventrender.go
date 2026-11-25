@@ -334,7 +334,8 @@ func RenderEvent(in RenderEventInput) (*RenderedEvent, error) {
 		ed.spec = spec
 		refusals = append(refusals,
 			spec.CheckQuestions(cid, scope[cid]),
-			spec.CheckSeatSpace(cid, scope[cid], len(seats), RuleSpecRender))
+			spec.CheckBlocksAndClues(cid, ed.template),
+			spec.CheckSeatSpace(cid, scope[cid], ed.template, len(seats), RuleSpecRender))
 	}
 	if err := errors.Join(refusals...); err != nil {
 		return nil, err

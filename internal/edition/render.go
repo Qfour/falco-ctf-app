@@ -273,8 +273,13 @@ func render(in RenderInput) (*Rendered, error) {
 	if err := in.Spec.CheckQuestions(in.CID, in.Questions); err != nil {
 		return nil, err
 	}
+	// E2 of `blocks` and `clues` (amendment 28). The render does not read them: a block's
+	// lines are not reordered yet (A7-x PR 2), so the output is the same with or without them.
+	if err := in.Spec.CheckBlocksAndClues(in.CID, in.Template); err != nil {
+		return nil, err
+	}
 	// B8 (a2), before anything is drawn: a space below 2 x the seats is E3, whatever the key.
-	if err := in.Spec.CheckSeatSpace(in.CID, in.Questions, len(in.Seats), RuleSpecRender); err != nil {
+	if err := in.Spec.CheckSeatSpace(in.CID, in.Questions, in.Template, len(in.Seats), RuleSpecRender); err != nil {
 		return nil, err
 	}
 	slots, err := renderSlots(in.CID, in.Spec, in.Questions)
