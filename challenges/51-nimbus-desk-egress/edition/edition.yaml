@@ -9,13 +9,15 @@ fixed:
 slots:
   # Q5 dest-host: the host name the shell's connection to 203.0.113.77 was meant for. It is
   # only in cluster-dns.log (the gateway refused the connection before any name was sent).
-  # The 10 decoys are hosts of the same shape that the web service resolved from the same
-  # pod in the same half hour (its link-preview check) and then fetched through the egress
-  # proxy. 16 x 32 = 512 names.
+  # The 20 decoys are hosts of the same shape that the web service resolved from the same
+  # pod in the same half hour (its link-preview check): 10 of them were then fetched through
+  # the egress proxy, 10 were never fetched (nobody opened the ticket), so "not in the proxy
+  # log" still leaves 11. Only the DNS answer = the refused dst decides. 16 x 32 = 512 names
+  # (B8: S >= 2N for N <= 256 seats; 20 = MaxDecoys).
   - name: dest
     role: answer
     question: dest-host
-    decoys: 10
+    decoys: 20
     vocab:
       - [files-03.example, files-07.example, files-11.example, files-14.example, files-18.example, files-21.example, files-25.example, files-29.example,
          files-32.example, files-36.example, files-40.example, files-43.example, files-47.example, files-51.example, files-54.example, files-58.example,

@@ -24,33 +24,32 @@ cat preservation-note.txt
 grep 'verdict=deny' egress-gateway.log | grep nimbus-desk      # 拒否された宛先の address
 grep 'pod=desk-prod/nimbus-desk' cluster-dns.log               # 同じ Pod の問い合わせ
 grep 'answer=203.0.113.77$' cluster-dns.log                    # その address を返した問い合わせ
-grep -c "host=<上の query の値> " egress-proxy.log              # 0 = link preview ではない
 ```
 
 ## 手がかり 1 つだけで絞ったときに残る候補 (`dest-host`、答えを含む件数)
 
-候補 = 束の中で、答えと同じ形の host 名 (語彙の名前)。
+候補 = 束の中で、答えと同じ形の host 名 (語彙の名前)。答え 1 + 囮 20。囮 20 のうち 10 は link preview
+を proxy で取りに行った host、10 は確認 (DNS) だけで取りに行かなかった host (誰も ticket を開いていない)。
 
 | 手がかり | 残る件数 | 理由 |
 |---|---|---|
-| node だけ | 11 | DNS と proxy の記録は node を持たない。すべて node-b の Pod |
-| container / Pod だけ | 11 (+ 形の違う正常な名前 5) | DNS の client は Pod。囮 10 は同じ Pod の link preview の問い合わせ |
-| rule の種類だけ | 11 | 通信の記録には Falco の rule が無い (Falco はこの接続を記録していない) |
-| 時刻の窓だけ (17:00〜17:31) | 11 | 囮 10 はすべてこの窓の中。最初の拒否の 42 秒前と 41 秒後の囮を含む |
-| 宛先の種類だけ (外部) | 11 | すべて 203.0.113.0/24 (文書用の範囲)。拒否の宛先の近くの address の囮を含む |
-| port だけ | 11 | proxy 経由の囮も拒否された接続も 443 |
-| process の名前だけ | 11 | DNS・proxy・gateway の記録は process を持たない |
+| node だけ | 21 | DNS と proxy の記録は node を持たない。すべて node-b の Pod |
+| container / Pod だけ | 21 (+ 形の違う正常な名前 5) | DNS の client は Pod。囮 20 は同じ Pod の link preview の確認 |
+| rule の種類だけ | 21 | 通信の記録には Falco の rule が無い (Falco はこの接続を記録していない) |
+| 時刻の窓だけ (17:00〜17:31) | 21 | 囮 20 はすべてこの窓の中。最初の拒否の 28 秒前、拒否と拒否の間 (11 秒後)、41 秒後の囮を含む |
+| 宛先の種類だけ (外部) | 21 | すべて 203.0.113.0/24 (文書用の範囲)。拒否の宛先の前後の address (± 1・± 2) の囮を含む |
+| port だけ | 21 | proxy 経由の囮も拒否された接続も 443。DNS は port を持たない |
+| process の名前だけ | 21 | DNS・proxy・gateway の記録は process を持たない |
+| proxy の記録に無いことだけ | 11 | 確認だけで取りに行かなかった囮 10 が残る |
 
-1 つで決まる手がかりは 2 つで、どちらも正しい調べ方である:
+1 つで決まる手がかりは **DNS の答えと拒否された宛先の突き合わせ** (`answer` = `dst`、address の完全
+一致) だけで、これが正しい調べ方である。接続の時点で拒否された通信には名前が残らない
+(`dst_name=-`)。名前は、同じ Pod が引いた DNS の答えから取る、が防御側の定石。proxy の記録は「取りに
+行った正常な処理」を消す補助になるが、それだけでは決まらない (brief の「記録によって見え方が違う」は、
+gateway には名前が無く DNS にはある、の形で残している)。
 
-- **DNS の答えと拒否された宛先の突き合わせ** (`answer` = `dst`)。接続の時点で拒否された通信には名前が
-  残らない (`dst_name=-`)。名前は、その直前に同じ Pod が引いた DNS の答えから取る、が防御側の定石。
-- **proxy の記録に無いこと**。web service の link preview は「DNS で確かめてから proxy で取る」ので、
-  囮は DNS と proxy の両方に現れる。答えは DNS だけに現れ、gateway に直接向かって拒否された
-  (brief の「記録によって見え方が違う」)。
-
-囮だけが持つ書式の違いは作っていない: DNS の行は答えと囮で同じ key と同じ順、囮の proxy の行は
-proxy の記録の書式 (status 200 と 403 が混ざる)。
+囮だけが持つ書式の違いは作っていない: DNS の行は答えと囮で同じ key と同じ順、proxy の行の有無は
+囮の中でも半々、囮の proxy の行は proxy の記録の書式 (status 200 と 403 が混ざる)。
 
 ## 時刻 (調査 A と同じ世界)
 

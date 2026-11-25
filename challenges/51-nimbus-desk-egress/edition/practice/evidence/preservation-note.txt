@@ -16,8 +16,10 @@ files
                        of a pod shares the pod's IP, so a query does not say which container
                        or process asked.
   egress-proxy.log     the egress proxy, the sanctioned path for the link previews of the web
-                       service: it checks the host of a link with a DNS lookup (to refuse
-                       private addresses) and then fetches it through the proxy. The proxy is
+                       service. When a ticket is saved, the web service checks the host of each
+                       link in it with a DNS lookup (to refuse private addresses); the preview
+                       is fetched through the proxy only when someone opens the ticket, so a
+                       checked host whose ticket nobody opened has no line here. The proxy is
                        in the cluster; its own outbound connections leave by its own egress and
                        are not in egress-gateway.log.
 

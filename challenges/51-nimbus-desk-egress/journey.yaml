@@ -27,7 +27,7 @@ steps:
       どの file も 1 行 1 件で、時刻は UTC の RFC 3339 (YYYY-MM-DDThh:mm:ssZ)。
       egress-gateway.log の key: verdict=allow / verdict=deny、proto、src_pod、src、dst、
       dst_name、policy。cluster-dns.log の key: client、pod、query、type、rcode、answer。
-      egress-proxy.log の key: client、pod、method、host、port、status、rule。
+      egress-proxy.log の key: client、pod、method、host、port、status、bytes_out、rule。
       falco-alerts.jsonl は 1 行 1 件の JSON で、rule・time と、output_fields の container.name・
       proc.name・proc.pname・proc.cmdline・fd.name を持つ。
   - label: 回答する
@@ -62,14 +62,16 @@ hints:
     text: >-
       概要。Q5: egress-gateway.log で nimbus-desk の Pod の verdict が deny の行の dst を確かめ、
       cluster-dns.log で、同じ Pod の問い合わせのうち answer がその address の行を探す。web service の
-      link preview の問い合わせなら、その後に egress-proxy.log に同じ host の行がある。Q6:
+      link preview の確認でも、取りに行かなかった host は egress-proxy.log に行が無いので、proxy の
+      記録だけでは決まらない。Q6:
       falco-alerts.jsonl の rule と time、egress-gateway.log の拒否の時刻を書き出して並べる。
   - kind: solution
     text: >-
       解答の手順 (値はイベントごとに違うので、ここには書かない)。Q5:
       grep 'verdict=deny' egress-gateway.log | grep nimbus-desk
       で拒否された宛先の address が 1 つに決まる。cluster-dns.log で answer がその address の行の
-      query の値が答え (egress-proxy.log にその host の行が無いことも確かめる)。Q6: shell の起動、
+      query の値が答え (answer の address が近い行や、時刻が拒否に近い行もあるので、address は
+      完全に一致させる)。Q6: shell の起動、
       API server への接続、設定と資格情報の読み取り、内容をまとめる、送信の試み、の順に起きた。
       それぞれに当たる Tactic のラベルを、この順に , でつなぐ。
 docsUrl: /missions/51-nimbus-desk-egress/
