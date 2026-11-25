@@ -187,16 +187,23 @@ func SpecText(nameWords, decoys int) string {
 	}
 	var b strings.Builder
 	b.WriteString("version: 1\ntime:\n  base: \"2001-01-01T00:00:00Z\"\nfixed:\n  q5: \"c2,c4\"\nslots:\n")
-	fmt.Fprintf(&b, "  - name: who\n    role: answer\n    question: q1\n    decoys: %d\n    vocab:\n      - [%s]\n", decoys, strings.Join(words, ", "))
-	fmt.Fprintf(&b, "  - name: where\n    role: answer\n    question: q2\n    decoys: %d\n    vocab:\n      - [srv]\n      - [y]\n      - %s\n      - %s\n      - %s\n", decoys, ten("d"), ten("e"), ten("f"))
-	fmt.Fprintf(&b, "  - name: tag\n    role: answer\n    question: q3\n    decoys: %d\n", decoys)
-	fmt.Fprintf(&b, "  - name: when\n    role: answer\n    question: q4\n    decoys: %d\n    window: {from: 0, to: 3600}\n", decoys)
+	fmt.Fprintf(&b, "  - name: who\n    role: answer\n    question: q1\n    decoys: %d\n    clues: %s\n    vocab:\n      - [%s]\n", decoys, Clues("who"), strings.Join(words, ", "))
+	fmt.Fprintf(&b, "  - name: where\n    role: answer\n    question: q2\n    decoys: %d\n    clues: %s\n    vocab:\n      - [srv]\n      - [y]\n      - %s\n      - %s\n      - %s\n", decoys, Clues("where"), ten("d"), ten("e"), ten("f"))
+	fmt.Fprintf(&b, "  - name: tag\n    role: answer\n    question: q3\n    decoys: %d\n    clues: %s\n", decoys, Clues("tag"))
+	fmt.Fprintf(&b, "  - name: when\n    role: answer\n    question: q4\n    decoys: %d\n    window: {from: 0, to: 3600}\n    clues: %s\n", decoys, Clues("when"))
 	b.WriteString("  - name: other\n    role: filler\n    format: name\n    vocab:\n      - [n0, n1, n2]\n")
 	// The time of each line of the groups of who, where and tag (when's lines are timed by their
 	// own marks): one filler per line, all of one window after when's.
 	for _, g := range Groups[:3] {
 		for j := 0; j <= decoys; j++ {
 			fmt.Fprintf(&b, "  - {name: %s-t%d, role: filler, format: timestamp, window: {from: 7200, to: 10800}}\n", g, j)
+		}
+	}
+	// The key of each line of every group: the filler its line and its clue line share
+	// (ADR-0056 amendment 31, E2 (e2)).
+	for _, g := range Groups {
+		for j := 0; j <= decoys; j++ {
+			fmt.Fprintf(&b, "  - {name: %s-k%d, role: filler, format: name, vocab: [[ka, kb, kc]]}\n", g, j)
 		}
 	}
 	// One block per group (ADR-0056 amendment 28, B17): blocks is the last key, so a case can add
@@ -228,10 +235,12 @@ func BlockLines(decoys int, g string) (int, int) {
 // TemplateText, in the template's text and in a bundle's.
 const TimeField = 3
 
-// TemplateText is the template of the event edition: the first line, then one block per answer
-// slot (Groups, BlockLines) whose lines are the same but for their marks (B17): the answer's line
-// and one line of each decoy, each with a time of its own (a filler, or the mark of when's group
-// itself), the marks alone as tokens. A line of a filler ends it.
+// TemplateText is the template of the event edition in the two-step shape (ADR-0056 amendments 29
+// and 31): the first line, then one block per answer slot (Groups, BlockLines) whose lines are the
+// same but for their marks (B17): the answer's line and one line of each decoy, each with a time
+// of its own (a filler, or the mark of when's group itself) and a key of its own (g-k<j>), the
+// marks alone as tokens. A line of a filler follows, then the clue line of every line of every
+// group (ClueLine), outside the blocks.
 func TemplateText(decoys int) string {
 	var b strings.Builder
 	b.WriteString("fixture record, placeholder text only\n")
@@ -242,14 +251,53 @@ func TemplateText(decoys int) string {
 				slot = fmt.Sprintf("%s-d%d", g, j)
 			}
 			if g == "when" {
-				fmt.Fprintf(&b, "when record at {{ctf:%s}}\n", slot)
+				fmt.Fprintf(&b, "when record at {{ctf:%s}} key {{ctf:when-k%d}}\n", slot, j)
 				continue
 			}
-			fmt.Fprintf(&b, "%s record at {{ctf:%s-t%d}} holds {{ctf:%s}}\n", g, g, j, slot)
+			fmt.Fprintf(&b, "%s record at {{ctf:%s-t%d}} key {{ctf:%s-k%d}} holds {{ctf:%s}}\n", g, g, j, g, j, slot)
 		}
 	}
 	b.WriteString("side-note = {{ctf:other}}\n")
+	for _, g := range Groups {
+		for j := 0; j <= decoys; j++ {
+			b.WriteString(ClueLine(g, j) + "\n")
+		}
+	}
 	return b.String()
+}
+
+// Clues is the clues of answer slot g (its `clues:` list): the two words of the clue columns of
+// its answer's clue line.
+func Clues(g string) string {
+	a, b := ClueTuple(g, 0)
+	return "[" + a + ", " + b + "]"
+}
+
+// ClueTuple is the two words of the clue columns of the clue line of the j-th line of a group (0:
+// the answer's) whose clue words are of prefix p: the answer's line holds both clues, line 1 the
+// second and line 2 the first (so each clue alone leaves the answer and one decoy: 2 x attempts
+// for one attempt, B19), line 3 neither (a square of four, so the answer's words are no more
+// frequent than the other lines', (b17-3) (iii) and (iv)), and the lines from 4 words of their
+// own, two by two sharing the first. No two lines have one tuple ((b17-3) (i)).
+func ClueTuple(p string, j int) (string, string) {
+	switch j {
+	case 0:
+		return p + "-ca", p + "-cb"
+	case 1:
+		return p + "-x1", p + "-cb"
+	case 2:
+		return p + "-ca", p + "-y1"
+	case 3:
+		return p + "-x1", p + "-y1"
+	}
+	return fmt.Sprintf("%s-x%d", p, (j-4)/2+2), fmt.Sprintf("%s-y%d", p, j)
+}
+
+// ClueLine is the clue line of the j-th line of group g: its key g-k<j> and the words of its clue
+// columns (ClueTuple), the rest the same in every clue line (E2 (e4)).
+func ClueLine(g string, j int) string {
+	a, b := ClueTuple(g, j)
+	return fmt.Sprintf("%s clue key {{ctf:%s-k%d}} by %s at %s", g, g, j, a, b)
 }
 
 // GoodSpec is the edition.yaml of an accepted event.

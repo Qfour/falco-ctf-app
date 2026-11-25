@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/edition"
+	"github.com/Qfour/falco-ctf-app/internal/edition/editiontest"
 )
 
 const (
@@ -33,30 +34,36 @@ const (
 // bkLine is a line of the block for the i-th slot of where's group (the answer first).
 type bkLine func(i int, slot string) string
 
+// The lines of the block end with a key of their own (key-1 ...), the filler each shares with its
+// clue line in k.txt (ADR-0056 amendment 31, E2 (e2)): bkTemplate writes the clue lines.
+
 // bkPlain is the lines of a group that no clue tells apart: one signature for all.
 func bkPlain(i int, slot string) string {
-	return fmt.Sprintf("{{ctf:tick-%d}} {{ctf:%s}} host", i+1, slot)
+	return fmt.Sprintf("{{ctf:tick-%d}} {{ctf:%s}} host {{ctf:key-%d}}", i+1, slot, i+1)
 }
 
-// bkClued is the lines of a group with a literal word of each line's own.
+// bkClued is the lines of a group with a literal word of each line's own (B7's (o3) as it is
+// before PR 4c: B17 refuses such a block, B7 is what is looked at here).
 func bkClued(i int, slot string) string {
-	return fmt.Sprintf("{{ctf:tick-%d}} {{ctf:%s}} pod-%d", i+1, slot, i)
+	return fmt.Sprintf("{{ctf:tick-%d}} {{ctf:%s}} pod-%d {{ctf:key-%d}}", i+1, slot, i, i+1)
 }
 
 // bkFilled is bkPlain with a path filler of its own (pf-1 ...) as the third word of each line.
 func bkFilled(i int, slot string) string {
-	return fmt.Sprintf("{{ctf:tick-%d}} {{ctf:%s}} {{ctf:pf-%d}}", i+1, slot, i+1)
+	return fmt.Sprintf("{{ctf:tick-%d}} {{ctf:%s}} {{ctf:pf-%d}} {{ctf:key-%d}}", i+1, slot, i+1, i+1)
 }
 
-// bkDoc is rdDoc with the time fillers tick-1 .. tick-7 of window, the path fillers pf-1 .. pf-7
-// when paths is set, and where's group in a block of c.txt's lines 2 to 8 when blocked is set.
+// bkDoc is rdDoc with where's clues (editiontest.Clues), the time fillers tick-1 .. tick-7 of
+// window, the keys key-1 .. key-7, the path fillers pf-1 .. pf-7 when paths is set, and where's
+// group in a block of c.txt's lines 2 to 8 when blocked is set.
 func bkDoc(window string, blocked, paths bool) specDoc {
-	d := rdDoc()
+	d := rdDoc().with(slotWhere, func(s *specSlot) { s.clues = editiontest.Clues("where") })
 	if blocked {
 		d = d.withBlocks("[{file: " + bkFile + ", from: 2, to: 8}]")
 	}
 	for j := 1; j <= 7; j++ {
 		d = sbWithFillers(d, sbTick(fmt.Sprintf("tick-%d", j), window))
+		d = sbWithFillers(d, specSlot{name: fmt.Sprintf("key-%d", j), role: "filler", format: "name", vocab: "[[ka, kb, kc]]"})
 		if paths {
 			d = sbWithFillers(d, specSlot{name: fmt.Sprintf("pf-%d", j), role: "filler", format: "path", vocab: specVocab("[opt]", "[y]", specWords("e", 10))})
 		}
@@ -65,10 +72,13 @@ func bkDoc(window string, blocked, paths bool) specDoc {
 }
 
 // bkTemplate is a.txt, a line `<slot>={{ctf:<slot>}}` for every slot that is not of where's group
-// nor a filler of the block, and c.txt: the line `begin`, then a line of line for each slot of
-// where's group (the answer first, then its decoys).
+// nor a filler of the block, c.txt: the line `begin`, then a line of line for each slot of
+// where's group (the answer first, then its decoys), and k.txt: the clue line of each key (its
+// clue columns editiontest.ClueTuple's words).
 func bkTemplate(spec *edition.Spec, line bkLine) []edition.BundleFile {
-	ofBlock := func(name string) bool { return strings.HasPrefix(name, "tick-") || strings.HasPrefix(name, "pf-") }
+	ofBlock := func(name string) bool {
+		return strings.HasPrefix(name, "tick-") || strings.HasPrefix(name, "pf-") || strings.HasPrefix(name, "key-")
+	}
 	var a []string
 	group := []string{"where"}
 	for _, s := range spec.Slots {
@@ -84,10 +94,13 @@ func bkTemplate(spec *edition.Spec, line bkLine) []edition.BundleFile {
 		}
 	}
 	c := []string{"begin"}
+	var k []string
 	for i, s := range group {
 		c = append(c, line(i, s))
+		w1, w2 := editiontest.ClueTuple("where", i)
+		k = append(k, fmt.Sprintf("clue {{ctf:key-%d}} %s %s", i+1, w1, w2))
 	}
-	return []edition.BundleFile{sbFile("a.txt", a), sbFile(bkFile, c)}
+	return []edition.BundleFile{sbFile("a.txt", a), sbFile(bkFile, c), sbFile("k.txt", k)}
 }
 
 // bkRender renders d with the template of line for the seats.
@@ -118,7 +131,8 @@ func bkCheck(spec *edition.Spec, tmpl []edition.BundleFile, bundles []*edition.B
 	return edition.CheckDecoySpread(demoCID, spec, rdQuestions(), tmpl, bundles, answers)
 }
 
-// bkBlock is the 7 lines of the block of a bundle (c.txt after `begin`), each as its 3 words.
+// bkBlock is the 7 lines of the block of a bundle (c.txt after `begin`), each as its 4 words (the
+// time, the column, the third word, the key).
 func bkBlock(t *testing.T, b *edition.Bundle) [][]string {
 	t.Helper()
 	for _, f := range b.Files {
@@ -132,8 +146,8 @@ func bkBlock(t *testing.T, b *edition.Bundle) [][]string {
 		var out [][]string
 		for _, ln := range lines[1:] {
 			fs := strings.Fields(ln)
-			if len(fs) != 3 {
-				t.Fatalf("seat %s: a line of the block has %d words, want 3", b.Seat, len(fs))
+			if len(fs) != 4 {
+				t.Fatalf("seat %s: a line of the block has %d words, want 4", b.Seat, len(fs))
 			}
 			out = append(out, fs)
 		}
@@ -353,6 +367,7 @@ func TestBlock_O1O2AnUnorderedOrChangedBlockIsRed(t *testing.T) {
 // V113 (o3): where a clue tells the lines apart, the answer on a decoy's line (the two values of
 // the column swapped, the times kept) is red; where no clue does, the same swap says nothing (the
 // two lines have one signature).
+// The (o3) before its replacement: PR 4c makes it the match of the key words (ADR-0056 amend. 31).
 func TestBlock_O3TheAnswerOnADecoysLine(t *testing.T) {
 	for _, c := range []struct {
 		name string

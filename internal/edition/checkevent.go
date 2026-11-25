@@ -30,13 +30,17 @@ package edition
 //	    (CheckCrossChallenge, ADR-0056 amendment 26, A7-x PR 3);
 //	7c. B17 and B19, the lines of an answer's group in the event's template (CheckRowRules,
 //	    amendments 27 and 28, A7-x PR 4);
+//	7d. B18, the clue words of the event's answers against those of the image's practice
+//	    edition (CheckPracticeClues, amendment 30, A7-x PR 4b);
 //	8.  B10, the continuity with the previous digests.
 //
 // A step that cannot be run (an input is missing, unreadable or malformed) stops the check
 // (fail-closed): no later step is skipped silently. A step that finds violations stops it
-// when the later steps need what it checks (1 to 5); steps 6, 7, 7b, 7c and 8 do not depend on
-// each other, so all five are run and their violations listed together, and the overlap numbers
-// of B4 are in the CheckReport whether the event is accepted or not.
+// when the later steps need what it checks (1 to 5); steps 6, 7, 7b, 7c, 7d and 8 do not depend
+// on each other, so all six are run and their violations listed together, and the overlap
+// numbers of B4 are in the CheckReport whether the event is accepted or not. (B18's practice
+// edition.yaml that cannot be read or parsed is B18's violation, not a usage error: it is the
+// image's, read with the practice editions' files in step 2.)
 //
 // The errors are of two kinds, which the command turns into two exit codes (D20):
 //
@@ -225,10 +229,10 @@ type CheckReport struct {
 
 // CheckedEvent is an event edition that every check of D20 accepted (ADR-0056 amendment 12): E1,
 // E2, E3, B8 (a1) and (a2), B1 to B10, B11 (the run id of the render record), B12 (its scope
-// digest), B13 to B16 (between the challenges of the scope) and B17 and B19 (the lines of an
-// answer's group). It carries what the digests file and the command's one line need: the run id of the
-// answers table, the digest of
-// every bundle, and how many seats and challenges were checked. It is made by CheckEvent and by
+// digest), B13 to B16 (between the challenges of the scope), B17 and B19 (the lines of an
+// answer's group) and B18 (the clue words of an answer against the practice's). It carries what
+// the digests file and the command's one line need: the run id of the answers table, the digest
+// of every bundle, and how many seats and challenges were checked. It is made by CheckEvent and by
 // nothing else (its fields are unexported, and validator_door_source_test.go fixes that no other
 // non-test file builds one), and WriteDigests takes it and nothing weaker.
 type CheckedEvent struct {
@@ -336,8 +340,8 @@ func CheckEvent(in CheckInput) (*CheckedEvent, CheckReport, error) {
 		return nil, report, classify("the evidence root cannot be read", err)
 	}
 
-	// 6, 7, 7b, 7c and 8 do not need each other's result: all five run, and what they found is
-	// listed together.
+	// 6, 7, 7b, 7c, 7d and 8 do not need each other's result: all six run, and what they found
+	// is listed together.
 	var refusals []error
 	var b4 collector
 	report.OverlapRan = true
@@ -350,6 +354,7 @@ func CheckEvent(in CheckInput) (*CheckedEvent, CheckReport, error) {
 	refusals = append(refusals, checkSpreads(scope, editions, bundles.bundles, table))
 	refusals = append(refusals, checkCrossChallenges(scope, scored.Catalog, editions, bundles.bundles, table))
 	refusals = append(refusals, checkRowRules(scope, editions))
+	refusals = append(refusals, checkPracticeClues(scope, editions, table))
 	refusals = append(refusals, checkContinuity(bundles.rows, previous, !in.NoPrevious))
 	if err := errors.Join(refusals...); err != nil {
 		return nil, report, err
@@ -489,6 +494,26 @@ func checkRowRules(scope Scope, editions map[string]*eventEdition) error {
 		ed := editions[cid]
 		_, err := ed.spec.CheckRowRules(cid, scope[cid], ed.template)
 		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// checkPracticeClues is step 7d: B18 (CheckPracticeClues, ADR-0056 amendment 30) on the event
+// edition of every challenge of the scope (step 4 parsed every edition.yaml, or the check stopped
+// there) against the image's practice edition of the same challenge (its edition.yaml and its
+// template, read in step 2 with the practice editions' files: table.files). A challenge whose
+// practice edition the image does not have is given nothing, which B18 refuses. It lists what
+// every challenge has, in the order of the challenge ids.
+func checkPracticeClues(scope Scope, editions map[string]*eventEdition, table *CheckedTable) error {
+	var errs []error
+	for _, cid := range scope.sortedCIDs() {
+		ed := editions[cid]
+		var spec []byte
+		var tmpl []BundleFile
+		if pe := table.files[cid]; pe != nil {
+			spec, tmpl = pe.Spec, pe.Template
+		}
+		errs = append(errs, ed.spec.CheckPracticeClues(cid, scope[cid], ed.template, spec, tmpl))
 	}
 	return errors.Join(errs...)
 }

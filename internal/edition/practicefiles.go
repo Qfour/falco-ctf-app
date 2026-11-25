@@ -3,7 +3,8 @@ package edition
 // practicefiles.go reads the FILES of the image's practice editions (ADR-0056 D8, D10 B4,
 // D19 A4c-2): for every practice edition, its bundle (edition/practice/evidence/<file>) and
 // its template (edition/template/<file>). They are what B4 compares an event edition with
-// (practiceoverlap.go). They are read by the validator's path only (A4e, through
+// (practiceoverlap.go). Its edition.yaml is read too, as bytes, for B18 (practiceclues.go,
+// amendment 30), which parses it. They are read by the validator's path only (A4e, through
 // CheckedTable, M2) and never by the scoreboard's start-up: Load does not call this, so a
 // bundle or a template that is missing or broken does not stop a scoreboard, which has no
 // use for it. Where a practice edition is comes from loadPractice (practiceDirs), the one
@@ -34,9 +35,16 @@ type practiceDirs map[string]string
 // directory that does not exist is no file (nil): a practice edition with a template and
 // no bundle, or the reverse, is B4's to compare as far as it goes, and whether a practice
 // edition is complete is A4a-2's and V67's.
+//
+// Spec is the bytes of its edition.yaml (B18's input, ADR-0056 amendment 30: the answer slots
+// and their clues, by question), or nil when the file is missing or cannot be read (readCapped:
+// not a regular file, a link, larger than MaxSpecBytes + 1). It is not parsed here, and a Spec
+// that is nil is not an error of the table's door: B18 refuses it (fail-closed), and no other
+// rule reads it.
 type practiceEdition struct {
 	Evidence []BundleFile
 	Template []BundleFile
+	Spec     []byte
 }
 
 // practiceFiles is the files of every practice edition of the image, by challenge id.
@@ -61,9 +69,19 @@ func readPracticeFiles(dirs practiceDirs) (practiceFiles, error) {
 		if err != nil {
 			return nil, fmt.Errorf("edition: practice template of %s: %w", id, err)
 		}
-		out[id] = &practiceEdition{Evidence: ev, Template: tpl}
+		out[id] = &practiceEdition{Evidence: ev, Template: tpl, Spec: readPracticeSpec(editionDir)}
 	}
 	return out, nil
+}
+
+// readPracticeSpec is the bytes of <editionDir>/edition.yaml, read as an event edition's is
+// (readCapped, MaxSpecBytes + 1: ParseSpec refuses the byte over), or nil when it cannot be read.
+func readPracticeSpec(editionDir string) []byte {
+	data, err := readCapped(filepath.Join(editionDir, SpecFileName), MaxSpecBytes+1)
+	if err != nil {
+		return nil
+	}
+	return data
 }
 
 // readFlatDir is the files of <parent>/<name>/, read as a bundle is (B2). A parent or a

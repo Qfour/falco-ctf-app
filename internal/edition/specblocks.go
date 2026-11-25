@@ -51,6 +51,9 @@ import (
 // A clue is a literal word of the template: a TOKEN (B7's, tokenSpans) of some file that holds no
 // mark. A slot name inside a mark, or a word glued to a mark, is not one.
 //
+// Then, when nothing above was refused (one defect, one violation), the clue lines of the groups
+// in blocks (amendment 31, checkClueLines): (e1) to (e4).
+//
 // It reads no file: the caller gives the template's bytes.
 func (s *Spec) CheckBlocksAndClues(cid string, template []BundleFile) error {
 	if s == nil {
@@ -79,7 +82,104 @@ func (s *Spec) CheckBlocksAndClues(cid string, template []BundleFile) error {
 	}
 	checkMarksOutsideBlocks(cid, template, gi, covered, inBlock, &c)
 	s.checkClues(cid, template, &c)
+	if len(c.errs) == 0 && c.dropped == 0 {
+		s.checkClueLines(cid, template, gi, &c)
+	}
 	return c.err()
+}
+
+// checkClueLines is E2's (e1) to (e4) (ADR-0056 amendment 31), on an edition whose blocks and
+// clues passed the rules of CheckBlocksAndClues before it:
+//
+//   - (e1) the answer slot of a group in a block declares a clue at least;
+//   - (e2) every line of a block has one clue line: the one line outside every block that shares a
+//     filler mark with it (its key), which no other line of a group shares one with (clueLinesOf);
+//   - (e3) every declared clue is a literal word of the answer's clue line, and that word is a clue
+//     column (clueColumns: the clue lines are compared by the place of a word, not by the word);
+//   - (e4) the other clue lines of the block have the answer's clue line's shape (checkClueLineShape).
+//
+// It reads the template with the index B17 reads (newRowIndex, rowsymmetry.go: there is one); it
+// does not call readRows, which calls this check. A file the lexer of the marks refuses is E3's
+// (the renderer's and the validator's own refusal), and the clue lines are then not looked at.
+func (s *Spec) checkClueLines(cid string, template []BundleFile, gi *groupIndex, c *collector) {
+	if len(s.Blocks) == 0 {
+		return
+	}
+	forms, err := s.blockForms(template)
+	if err != nil {
+		c.add(newSpecViolation(RuleSpecQuestion, "the blocks cannot be read, so their clue lines cannot be held to E2", 0, cid, "", "", "", nil))
+		return
+	}
+	x, badFile := newRowIndex(template, forms)
+	if badFile != "" {
+		return
+	}
+	owner := make(map[*rowLine]*rowLine)
+	noClues := make(map[string]bool)
+	for i := range forms {
+		f := &forms[i]
+		sl := gi.decl[f.group]
+		at := fmt.Sprintf("blocks[%d]", i)
+		flag := func(msg string, ln fileLine) {
+			v := newSpecViolation(RuleSpecQuestion, msg, ln.line, cid, f.qid, f.group, at, nil)
+			v.File = shownName(ln.file)
+			c.add(v)
+		}
+		if sl == nil || len(sl.Clues) == 0 {
+			if !noClues[f.group] {
+				noClues[f.group] = true
+				flag("the answer slot of a group in a block declares no clue (E2 (e1): the clues, on the clue lines of the group, are what tell its lines apart)", fileLine{f.file, f.from + 1})
+			}
+			continue
+		}
+		rows := blockRows(f, x)
+		if rows == nil {
+			flag("a line of the block is not the line the blocks were read from", fileLine{f.file, f.from + 1})
+			continue
+		}
+		lines, ok := clueLinesOf(rows, gi, x, owner, flag)
+		if !ok {
+			continue
+		}
+		ans := lines[f.answer]
+		cols, missing := clueColumns(sl, ans)
+		if missing >= 0 {
+			flag(fmt.Sprintf("clues[%d] is not a literal word of the answer's clue line (E2 (e3): each clue is a word of it, and the place of that word is a clue column)", missing), ans.at)
+			continue
+		}
+		checkClueLineShape(f.answer, lines, cols, gi, x, flag)
+	}
+}
+
+// checkClueLineShape is (e4) for the clue lines of one block, the answer's the ans-th: each other
+// one has its marks at the words of the answer's clue line's marks, of the same declarations
+// (lineShape.differs, the rule of a block's lines; so a clue column holds a literal word, not a
+// mark), each occurring in the whole template as often ((b17-1) on the clue lines,
+// markCountsDiffer), and the same signature with the marks and the clue columns put out of sight
+// (lineSignature, the function B17 compares a block's lines with: only the words put out of sight
+// differ).
+func checkClueLineShape(ans int, lines []*rowLine, cols []int, gi *groupIndex, x *rowIndex, flag func(string, fileLine)) {
+	ref := lines[ans]
+	refShape := shapeOf(ref.toks, -1)
+	var marks []int
+	for _, m := range refShape.marks {
+		marks = append(marks, m.token)
+	}
+	masked := clueMasked(ref, cols)
+	want := lineSignature(ref.pseudo, masked)
+	for j, l := range lines {
+		if j == ans {
+			continue
+		}
+		switch {
+		case refShape.differs(shapeOf(l.toks, -1), gi) != "":
+			flag("the clue line has its marks at other words, or marks of other declarations, than the answer's clue line; a clue column holds a literal word, not a mark (E2 (e4))", l.at)
+		case markCountsDiffer(ref, l, marks, x):
+			flag("a mark of the clue line occurs in the template another number of times than the mark at the same word of the answer's clue line (E2 (e4), as (b17-1))", l.at)
+		case lineSignature(l.pseudo, masked) != want:
+			flag("the clue line differs from the answer's clue line outside its marks and its clue columns (E2 (e4): the clue lines of a group are the same but for those)", l.at)
+		}
+	}
 }
 
 // fileLine is one line (1-based) of one template file.
