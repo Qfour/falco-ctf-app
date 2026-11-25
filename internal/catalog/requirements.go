@@ -103,11 +103,14 @@ func (s Scenario) checkRequirements(scope Catalog) error {
 	return fmt.Errorf("%w (ADR-0055 D6): %s; run make gen-scenarios", ErrRequirementsDiffer, strings.Join(diff, "; "))
 }
 
-// requirementsShape holds the requirements block of doc (sourceDocument's node) to the one
-// form the generator writes, on the nodes, before the strict decode (which would read a
+// requirementsShape holds the values and types of the requirements block of doc
+// (sourceDocument's node), on the nodes, before the strict decode (which would read a
 // missing key or a null as false or an empty list, and yaml.v3 decodes words such as yes
-// or a quoted "true" into a bool, and a number into a string). The platform reads the same
-// file with its own reader, so the block has one spelling (D6, fail-closed):
+// or a quoted "true" into a bool, and a number into a string). It does not hold the layout:
+// a different key order, a flow list or an unneeded quote is accepted here (as S2c accepts
+// a flow challenges list); the exact form (order, block lists) is held by gen-scenarios
+// --check, which compares the committed bytes with the generator's. So the platform's reader
+// may assume the form the generator writes. What is checked (D6, fail-closed):
 //   - requirements is written and is a mapping; each of answers, detect, exfil and rules is
 //     written and not null;
 //   - detect and exfil are a plain scalar of tag !!bool whose text is true or false;
