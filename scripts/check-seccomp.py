@@ -45,7 +45,8 @@ EXTRA RENDERS (scenario.missions)
 `scenario.missions` is non-empty, so a render with default values never contains
 it. After the default-values pass over every chart, ctf-user is therefore
 rendered again (a) with a synthetic `scenario.missions=["01-a"]` and (b) once
-per `challenges/values-scenario-*.yaml` (passed with `-f` only: challengeId and
+per `challenges/values-scenario-*.yaml` (passed with `-f`, plus the practice
+evidence names of a scope with investigate challenges, below: challengeId and
 username do not change the container set or any securityContext, so they are not
 passed; the source of the list of renders is currently that glob), and
 `check_pod_spec` is applied to those Pods too. Each extra render must contain `initContainers[missions-scope]`: a render
@@ -54,6 +55,21 @@ that lacks it (the template stopped emitting it, or a values file lost
 failure or an empty `values-scenario-*.yaml` glob. Other charts are rendered
 with default values only. The lines of the default-values pass are unchanged;
 the extra renders follow them.
+
+INVESTIGATE CHALLENGES (ADR-0056 D11 / A5d)
+--------------------------------------------
+A values file that marks an investigate challenge (`plant.mounts[evidence: true]`)
+renders only together with `evidence.challenges.<cid>.names` (the chart `fail`s
+otherwise; deploy-user.sh passes the names). Each values-scenario-*.yaml is
+therefore rendered with the names of its investigate challenges' public practice
+bundles, which are NOT derived here: they are asked of
+`scripts/check-flag-isolation.sh --practice-evidence-args` (its
+scope_practice_evidence, the derivation its own A5d renders use, built on the
+scope reader and the name lister deploy-user.sh sources). A failure of that
+helper, or output that is not `--set-string evidence.challenges.<...>=<name>`
+pairs, is a FAIL for that values file (it is not rendered without its names,
+and not skipped). The names add volume mounts to the `plant` initContainer
+only; the container set, and so what is judged, is unchanged.
 
 FAIL-CLOSED READS
 -----------------
@@ -97,6 +113,38 @@ CHALLENGES_DIR = REPO_ROOT / "challenges"
 # must contain it, so an extraction that lost it is an error and not a pass.
 SYNTHETIC_MISSIONS = ["--set-json", 'scenario.missions=["01-a"]']
 EXTRA_REQUIRED = (("initContainers", "missions-scope"),)
+
+# The practice evidence names of a real scope (see the docstring): asked, not derived.
+FLAG_ISOLATION = REPO_ROOT / "scripts" / "check-flag-isolation.sh"
+PRACTICE_EVIDENCE_FLAG = "--practice-evidence-args"
+EVIDENCE_ARG_PREFIX = "evidence.challenges."
+
+
+def practice_evidence_args(values_file, challenges_dir):
+    """(helm args, None) or (None, problem): the `--set-string
+    evidence.challenges.<cid>.names[<i>]=<name>` arguments of the investigate
+    challenges `values_file` marks ([] for none), from check-flag-isolation.sh."""
+    helper = subprocess.run(
+        ["bash", str(FLAG_ISOLATION), PRACTICE_EVIDENCE_FLAG, str(values_file), str(challenges_dir)],
+        capture_output=True,
+        text=True,
+    )
+    if helper.returncode != 0:
+        return None, (
+            f"{FLAG_ISOLATION.name} {PRACTICE_EVIDENCE_FLAG} failed "
+            f"(exit {helper.returncode}): {helper.stderr.strip()}"
+        )
+    args = helper.stdout.splitlines()
+    pairs_ok = len(args) % 2 == 0 and all(
+        flag == "--set-string" and value.startswith(EVIDENCE_ARG_PREFIX) and "=" in value
+        for flag, value in zip(args[0::2], args[1::2])
+    )
+    if not pairs_ok:
+        return None, (
+            f"{FLAG_ISOLATION.name} {PRACTICE_EVIDENCE_FLAG} printed something other than "
+            f"'--set-string {EVIDENCE_ARG_PREFIX}<...>=<name>' pairs ({len(args)} line(s))"
+        )
+    return args, None
 
 
 def effective_seccomp_type(container: dict, pod_security_context):
@@ -249,15 +297,22 @@ def check_render(chart, chart_dir, errors, extra_args=(), desc=None, require=())
 
 def extra_render_specs(challenges_dir=CHALLENGES_DIR):
     """([(description, helm args)], [problem]) for the extra ctf-user renders:
-    the synthetic scenario.missions, then one per challenges/values-scenario-*.yaml.
-    An empty glob is a problem (a check over zero files would pass silently)."""
+    the synthetic scenario.missions, then one per challenges/values-scenario-*.yaml
+    (with its practice evidence names, see the docstring). An empty glob is a
+    problem (a check over zero files would pass silently), and so is a values file
+    whose names could not be had (it is then not rendered: a render without them
+    is not what deploy-user.sh would give helm)."""
     specs = [('scenario.missions=["01-a"]', list(SYNTHETIC_MISSIONS))]
     problems = []
     files = sorted(Path(challenges_dir).glob("values-scenario-*.yaml"))
     if not files:
         problems.append(f"no values-scenario-*.yaml found under {challenges_dir}")
     for f in files:
-        specs.append((f"-f {f.name}", ["-f", str(f)]))
+        ev, problem = practice_evidence_args(f, challenges_dir)
+        if problem is not None:
+            problems.append(f"-f {f.name}: practice evidence names: {problem}")
+            continue
+        specs.append((f"-f {f.name}", ["-f", str(f), *ev]))
     return specs, problems
 
 

@@ -28,6 +28,11 @@
 #       temporary values file), never as an edit to a committed chart or
 #       challenges/ file.
 #
+#   ./scripts/check-flag-isolation.sh --practice-evidence-args <values file> <challenges root>
+#       Prints (one per line) the helm arguments of a real scope's practice
+#       evidence names (scope_practice_evidence) and renders nothing; for
+#       scripts/check-seccomp.py's renders of the values-scenario-*.yaml files.
+#
 # ADR-0056 D11 / V2 / V43 (A5b): the evidence bundles' Secrets
 # `ctf-evidence-<cid>` (one per investigate challenge). Two things are checked
 # beyond the flag assertions above:
@@ -1438,6 +1443,27 @@ run_evidence_fixtures() {
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
+
+# --practice-evidence-args <values file> <challenges root> (ADR-0056 A5d, for
+# scripts/check-seccomp.py): the helm arguments that render a real scope's investigate
+# challenges with their public practice bundle's names, one argument per line on stdout
+# (nothing for a scope without one). They come from scope_practice_evidence, the one
+# derivation of those names outside deploy-user.sh, so a second render of the real scopes
+# does not write it again. A violation is said on stderr and the exit is 1 (2: usage);
+# nothing is rendered here.
+if [ "${1:-}" = "--practice-evidence-args" ]; then
+  if [ "$#" -ne 3 ]; then
+    echo "usage: $0 --practice-evidence-args <values file> <challenges root>" >&2
+    exit 2
+  fi
+  if ! scope_practice_evidence "$2" "$3" || [ "$RC" -ne 0 ]; then
+    exit 1
+  fi
+  for a in ${SCOPE_EVIDENCE_ARGS[@]+"${SCOPE_EVIDENCE_ARGS[@]}"}; do
+    printf '%s\n' "$a"
+  done
+  exit 0
+fi
 
 if [ "${1:-}" = "--scope" ]; then
   label="$2"; shift 3 2>/dev/null || shift $#

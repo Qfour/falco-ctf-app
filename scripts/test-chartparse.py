@@ -784,6 +784,11 @@ def run_with_renders(s, fn, transform=None, rc=0, drop_extra_args=False):
         return subprocess.CompletedProcess(c.args, c.returncode, c.stdout, c.stderr)
 
     def fake(cmd, **kw):
+        # Only `helm template` is faked: the practice-evidence helper
+        # (check-flag-isolation.sh --practice-evidence-args) is not a render and
+        # always gives its real answer (cached like a render).
+        if list(cmd[:2]) != ["helm", "template"]:
+            return real(cmd, **kw)
         extra = len(cmd) > 3
         if extra and rc:
             return subprocess.CompletedProcess(cmd, rc, "", "boom")
@@ -809,8 +814,14 @@ def extra_errors(s, **kw):
     return errors, out
 
 
+def extra_specs(s):
+    """s.extra_render_specs() over the real tree, its helper calls cached (the
+    cases x mutants matrix would otherwise run the helper hundreds of times)."""
+    return run_with_renders(s, s.extra_render_specs)[0]
+
+
 def seccomp_case_missions_render_puts_missions_scope_in_the_checked_containers(s):
-    specs, problems = s.extra_render_specs()
+    specs, problems = extra_specs(s)
     assert problems == [], problems
     assert len(specs) >= 2, specs  # the synthetic id + at least one values-scenario file
     synthetic = [a for d, a in specs if a == ["--set-json", 'scenario.missions=["01-a"]']]
@@ -835,7 +846,7 @@ def seccomp_case_missions_scope_unconfined_in_the_render_is_a_failure(s):
     want_one_error(errors, "initContainers[missions-scope]", "'Unconfined'", "source: container")
     # the extra-render pass applies the same judgement to every extra render
     errors, _ = extra_errors(s, transform=lambda t: inject_into_missions_scope(t, UNCONFINED))
-    assert len(errors) == len(s.extra_render_specs()[0]) >= 2, errors
+    assert len(errors) == len(extra_specs(s)[0]) >= 2, errors
     for e in errors:
         assert e.startswith("ctf-user (") and "initContainers[missions-scope]" in e and "'Unconfined'" in e, e
 
@@ -845,7 +856,7 @@ def seccomp_case_missions_scope_privileged_in_the_render_is_a_failure(s):
     errors, _ = judge(s, text)
     want_one_error(errors, "initContainers[missions-scope]", "sets privileged: true")
     errors, _ = extra_errors(s, transform=lambda t: inject_into_missions_scope(t, PRIVILEGED))
-    assert len(errors) == len(s.extra_render_specs()[0]) >= 2, errors
+    assert len(errors) == len(extra_specs(s)[0]) >= 2, errors
     for e in errors:
         assert "initContainers[missions-scope]" in e and "sets privileged: true" in e, e
 
@@ -853,14 +864,14 @@ def seccomp_case_missions_scope_privileged_in_the_render_is_a_failure(s):
 def seccomp_case_extra_render_without_missions_scope_is_a_failure(s):
     # An extra render that no longer contains the container is not an empty pass.
     errors, _ = extra_errors(s, drop_extra_args=True)
-    assert len(errors) == len(s.extra_render_specs()[0]) >= 2, errors
+    assert len(errors) == len(extra_specs(s)[0]) >= 2, errors
     for e in errors:
         assert "initContainers[missions-scope] not found" in e, e
 
 
 def seccomp_case_extra_render_helm_failure_is_a_failure(s):
     errors, _ = extra_errors(s, rc=1)
-    assert len(errors) == len(s.extra_render_specs()[0]) >= 2, errors
+    assert len(errors) == len(extra_specs(s)[0]) >= 2, errors
     for e in errors:
         assert "`helm template` failed (exit 1)" in e and e.startswith("ctf-user ("), e
 
@@ -872,6 +883,111 @@ def seccomp_case_no_scenario_values_files_is_a_failure(s):
         errors = []
         run_with_renders(s, lambda: s.check_extra_renders(errors, empty))
         assert len(errors) == 1 and "no values-scenario-*.yaml" in errors[0], errors
+
+
+# --- investigate challenges (ADR-0056 D11 / A5d) ---------------------------
+# A values-scenario file that marks an investigate challenge renders only with the
+# names of its practice bundles, which check-seccomp.py asks of
+# check-flag-isolation.sh --practice-evidence-args (the A5d derivation) and does not
+# derive itself. The real tree holds one such file (ir-nimbus-desk).
+EVIDENCE_MARK = "      evidence: true"
+
+
+def _scenario_values_files(s):
+    return sorted(s.CHALLENGES_DIR.glob("values-scenario-*.yaml"))
+
+
+def _marks_investigate(f):
+    return EVIDENCE_MARK in f.read_text().splitlines()
+
+
+def _with_practice_evidence_args(s, fn, replacement):
+    saved = s.practice_evidence_args
+    s.practice_evidence_args = replacement
+    try:
+        return fn()
+    finally:
+        s.practice_evidence_args = saved
+
+
+def seccomp_case_investigate_values_are_rendered_with_their_practice_names(s):
+    specs, problems = extra_specs(s)
+    assert problems == [], problems
+    investigate = 0
+    for f in _scenario_values_files(s):
+        args = [a for d, a in specs if d == f"-f {f.name}"]
+        assert len(args) == 1, (f.name, [d for d, _ in specs])
+        ev = [a for a in args[0] if a.startswith("evidence.challenges.")]
+        if _marks_investigate(f):
+            investigate += 1
+            assert ev, f"{f.name} marks an investigate challenge but is rendered without its names: {args[0]}"
+            for a in ev:
+                key, _, name = a.partition("=")
+                assert key.endswith("]") and ".names[" in key and name, (f.name, a)
+            assert args[0].count("--set-string") == len(ev), (f.name, args[0])
+        else:
+            assert ev == [] and len(args[0]) == 2, (f.name, args[0])
+    assert investigate >= 1, (
+        "no values-scenario-*.yaml marks an investigate challenge: this case expects the real "
+        "tree to hold one (ir-nimbus-desk, ADR-0056)"
+    )
+    # ... and with those names every extra render passes (the chart's D11 `fail` is not hit)
+    errors, out = extra_errors(s)
+    assert errors == [], errors
+    assert out.count("== ctf-user (") == len(specs), out
+
+
+def seccomp_case_investigate_values_without_their_names_are_a_failure(s):
+    # Names withheld: the chart refuses the render, and that is an error, not a skip.
+    errors, _ = _with_practice_evidence_args(s, lambda: extra_errors(s), lambda v, c: ([], None))
+    marked = [f.name for f in _scenario_values_files(s) if _marks_investigate(f)]
+    assert marked, "no investigate values file in the real tree"
+    assert len(errors) == len(marked), (marked, errors)
+    for name, e in zip(marked, errors):
+        assert e.startswith(f"ctf-user (-f {name}): `helm template` failed"), e
+        assert "evidence.challenges" in e, e
+
+
+def seccomp_case_a_practice_evidence_failure_is_a_failure(s):
+    # The helper failing: one error per values file, and none of them is rendered.
+    errors, out = _with_practice_evidence_args(s, lambda: extra_errors(s), lambda v, c: (None, "boom"))
+    files = _scenario_values_files(s)
+    assert len(errors) == len(files) >= 1, errors
+    for f, e in zip(files, errors):
+        assert e == f"ctf-user: -f {f.name}: practice evidence names: boom", e
+    assert "== ctf-user (-f " not in out, out
+
+
+def seccomp_case_practice_evidence_args_are_held_to_their_shape(s):
+    good = "--set-string\nevidence.challenges.50-a.names[0]=x.txt\n"
+    rows = [
+        ("names", 0, good, ["--set-string", "evidence.challenges.50-a.names[0]=x.txt"], None),
+        ("no investigate challenge", 0, "", [], None),
+        ("exit 1", 1, good, None, "failed (exit 1)"),
+        ("exit 2", 2, "", None, "failed (exit 2)"),
+        ("--set instead of --set-string", 0, "--set\nevidence.challenges.50-a.names[0]=x.txt\n", None, "printed something other"),
+        ("an odd number of lines", 0, "--set-string\n", None, "printed something other"),
+        ("another value", 0, "--set-string\nchallenge.flags.03-a=x\n", None, "printed something other"),
+        ("no =", 0, "--set-string\nevidence.challenges.50-a.names[0]\n", None, "printed something other"),
+    ]
+    seen = []
+    for label, rc, stdout, want_args, want_problem in rows:
+        def run(cmd, rc=rc, stdout=stdout, **kw):
+            seen.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, rc, stdout, "helper said no")
+        saved = s.subprocess
+        s.subprocess = types.SimpleNamespace(run=run)
+        try:
+            args, problem = s.practice_evidence_args(Path("/v/values-scenario-x.yaml"), Path("/c"))
+        finally:
+            s.subprocess = saved
+        if want_problem is None:
+            assert problem is None and args == want_args, (label, args, problem)
+        else:
+            assert args is None and problem is not None and want_problem in problem, (label, args, problem)
+    want_cmd = ["bash", str(s.FLAG_ISOLATION), "--practice-evidence-args", "/v/values-scenario-x.yaml", "/c"]
+    assert seen and all(c == want_cmd for c in seen), seen
+    assert s.FLAG_ISOLATION == REPO_ROOT / "scripts" / "check-flag-isolation.sh", s.FLAG_ISOLATION
 
 
 def seccomp_case_main_fails_on_a_violation_in_an_extra_render(s):
@@ -1066,6 +1182,24 @@ SECCOMP_MUTANTS = [
     ("a malformed Pod securityContext is not reported",
      'errors.append(f"{chart}: {label}: spec.securityContext is not a mapping")',
      'pass'),
+    ("the practice evidence names are not passed to the render",
+     '["-f", str(f), *ev]',
+     '["-f", str(f)]'),
+    ("a values file whose practice evidence names failed is dropped silently",
+     'problems.append(f"-f {f.name}: practice evidence names: {problem}")',
+     'pass'),
+    ("the helper's exit status is not read",
+     'if helper.returncode != 0:',
+     'if False:'),
+    ("the helper's output is not held to its shape",
+     'if not pairs_ok:',
+     'if False:'),
+    ("the helper's flag is not checked",
+     'flag == "--set-string" and ',
+     ''),
+    ("the helper's value is not checked to be an evidence name",
+     'value.startswith(EVIDENCE_ARG_PREFIX) and ',
+     ''),
 ]
 
 
