@@ -170,7 +170,7 @@
   - `detect`: スコープに `type: detect` があるか。
   - `exfil`: スコープに exfil を採点に使う課題があるか。
   - `rules`: スコープの課題の `expectedRules ∪ forbiddenRules` の rule 名の集合。app は default ruleset と customRules の区別を持たない。名前が解決できるかの照合は platform が行う。
-  - `answers`: スコープの調査型の課題 id の、並べ替えた集合 (ADR-0056 D17)。A1b (#607) は merge 済みなので、S3a で最初から出す。ADR-0056 の P1b-1b (platform の render gate) がこれを読む。P1b-1b は、調査型の課題を main に置く A7 の前提である。
+  - `answers`: スコープの調査型の課題 id の、並べ替えた集合 (ADR-0056 D17)。A1b (#607) は merge 済みなので、S3a で最初から出す。ADR-0056 の P1b-1b (platform の stand-up の課金の前の gate。ADR-0056 追補 25) がこれを読む。P1b-1b は、調査型の課題を main に置く A7 の前提である。
 - **(2026-11-25 追補、決定 = CTO) `plantMountDirs` を `requirements` の項目から外した。** 元の記述 = 上の一覧の `rules` と `answers` の間にあった 1 項目 `` - `plantMountDirs`。 `` (説明の文は無かった)。理由 = 今の code では課題の catalog から導出できず (`plant.sh` の header からしか分からない)、読み手が居ない。要る場合は Signpost 5。
 - **形と検査 (S3a で決めた細部)**: 4 つの key を `answers`・`detect`・`exfil`・`rules` の順で必ず書く。一覧は byte 順に並べ、同じ値を 2 回書かない。空の一覧は `[]` の 1 行、空でなければ block の列 (1 行に `    - <値>`。YAML の plain で読めない値だけ double-quote)。`exfil` は `requireExfil: true` の課題が scope にあるか (型を問わない)。導出の関数は 1 つ (`catalog.DeriveRequirements`) で、生成器 (`Compose` / `ComposeSolo`、したがって `--check`) と起動 (`catalog.LoadScored`) が呼ぶ。起動は、scope に Restrict した catalog から導出し直し、file の値と違えば起動しない。scope の catalog だけで導出できるので、D5 の「起動時に定義から生成し直さない」(コースの合成には全モジュールが要る) とは別の検査である。strict decode は、`requirements` の欠落、4 つの key の欠落と null、未知の key・重複・型の違い、並びの乱れと重複、scenario の `challenges` に無い `answers` を拒否する (古い image は `requirements` を未知の key として拒否する = image と app の checkout は同じ SHA)。
 - Lv の母数 (= `challenges` の数) と、合計時間 (D7 の C2 の左辺)。
@@ -186,7 +186,7 @@
 | C4 | 同じ Pod に同居できる: (i) mount dir の属性の一致 (既存。プール全体、C6)、(ii) **plant の書き込み先の file が、プール全体の課題の間で互いに素** (新設。除外表は持たない)。プール全体で検査するので、どの組み合わせでも成り立つ。故意に違反させた fixture で赤になることを恒久 test にする (ADR-0007 V2 と同じ形)。**(ii) は ADR-0056 A5a-1 (app#619) の `check_claims` で実装済み。S3 で再実装しない** | CI (`gen-values --check`)、**R1** | (ii) は済み、(i) は既存 |
 | C5 | 採点の独立: I11 の交差 test を、生成した全 scenario に対し、scenario ごとの pin で回す。列挙が 0 件なら fail | CI (`make test`) | S1 |
 | C6 | flags は不変: module.yaml・course.yaml・生成物は flags の key を持たない (strict decode)。ADR-0033 D2 のスコープ = 生成物の `Restrict` 後の catalog (変更なし) | CI | S2 |
-| C7 | 必要な機能 ⊆ 環境: (起動時) スコープに detect があり `DETECT_RUNNER` が `off` (未設定を含む) なら、scoreboard は exit 1 (`local` は開発の経路として受ける。イベントで `k8s` であることは platform の verify が見る)。(platform) `requirements.rules` の全名が「pin した Falco 版の default ruleset ∪ customRules」で解決する。`detect` なら detectRunner が有効。どちらも課金の前に止める | 起動時 + platform の verify | S3a |
+| C7 | 必要な機能 ⊆ 環境: (起動時) スコープに detect があり `DETECT_RUNNER` が `off` (未設定を含む) なら、scoreboard は exit 1 (`local` は開発の経路として受ける。イベントで `k8s` であることは platform の verify が見る)。(platform) `requirements.rules` の全名が「pin した Falco 版の default ruleset ∪ customRules」で解決する。`detect` なら detectRunner が有効。どちらも課金の前に止める (2026-11-25 追補: platform の側は V8b = 後続、追跡 = platform#335) | 起動時 + platform の verify | 起動時 = S3a、platform = V8b (後続) |
 | C8 | 参照の閉包: overlay (narrative / quest) の entry が、そのモジュール・コースの外の課題を指せば fail。モジュールの参加者に見える文が外の課題を参照すれば fail (P27-2 の検査をモジュールの範囲に広げる) | CI + 起動時 | S4 |
 
 ### D8 score はコースごとに分ける
@@ -219,7 +219,7 @@
 |---|---|---|
 | **S1 (済み = app#604・platform#331・#688 (V1 の残り = id と dir 名の一致、gen-values での重複の拒否))** | app: I11 の交差 test を全 `scenarios/*` に (C5)、scenario の id と、scenario の中の課題 id の重複を拒否 (C1 の一部)、契約表 (a) の行。platform: 導出の fail-closed (C3 を塞ぐ)。範囲の正は各 PR の本文。本 ADR は V1-V3 の性質だけを求める | V1・V2・V3 |
 | **S2 (済み = S2a #687・S2b-1 #689・S2b-2 #690・S2c #692)** | S2a = parser と合成 (`shared` を含む C1、C6)。S2b = 生成器と移行 (module.yaml ×3・course.yaml ×1・golden)。S2c = `LoadScenario` を strict に、source の無い dir を拒否 | V4・V5 |
-| S3a (実装中。app の最初の PR は `requirements:` の生成と起動時の照合まで。C7 の `DETECT_RUNNER` の起動時の拒否 (V7) は後続の app の PR。済みにするのは両方と platform の対が入ってから) | 生成物の `requirements:` (D6 の 4 項目 = answers・detect・exfil・rules)、C7 の起動時の拒否、契約表 (b) の行 (両リポ同時。platform の対 = ADR-0056 P1b-1b と V8 の verify) | V7・V8 |
+| S3a (実装中。app の最初の PR は `requirements:` の生成と起動時の照合まで。C7 の `DETECT_RUNNER` の起動時の拒否 (V7) は後続の app の PR。済みにする条件 = app の 2 本 (requirements と V7) と V8a (platform#369) が入ること。V8b は C7 の platform の側として後続の段に回す (2026-11-25 追補、決定 = CTO 代行)) | 生成物の `requirements:` (D6 の 4 項目 = answers・detect・exfil・rules)、C7 の起動時の拒否、契約表 (b) の行 (両リポ同時。platform の対 = V8a (ADR-0056 P1b-1b、platform#369) と V8b (後続、platform#335)) | V7・V8a (V8b は後続) |
 | S3b | C2・C3 (C4 (ii) は ADR-0056 A5a-1 で済み) | V6 |
 | S4 | overlay の 3 層 (D10)、C8 | V9 |
 | S5 | solo course が全モジュールにあることの CI の規則、local / 常設の runbook (COO) | V10 |
@@ -271,6 +271,11 @@
 - **V6 (S3b)**: C2・C3・C4 (ii) に、それぞれ故意の違反 1 件の負の case を置く。C4 (ii) は gen-values の `--check` の内部 fixture で検査する (ADR-0007 V2 と同じ)。C4 (ii) の負の case は ADR-0056 A5a-1 (app#619) の `verify_claims_negative_tests` に既にある (ADR-0056 V42)。S3 で足すのは C2・C3 だけ。
 - **V7 (S3a)**: detect を含む scenario で `DETECT_RUNNER=off` なら、scoreboard が非ゼロ終了する (test)。
 - **V8 (S3a、platform)**: 生成物の `requirements.rules` から customRules の 1 名を消した環境で、verify が課金の前に止まる。`APP_PIN` の app に `requirements:` が無い ref でも止まる。platform の tree に rule 名の写しが無い (grep 0 件)。
+  - **(2026-11-25 追補、決定 = CTO 代行、ADR-0056 追補 25)** V8 を 2 つに分ける。元の文は上に残す。
+    - V8a (`answers`、platform#369 = ADR-0056 P1b-1b): scope に調査型の課題があり、`answersSecret` が無効なら、stand-up の課金の前の gate が止まる (ADR-0056 V12)。scenario を設定した回で、clone に `requirements:` が無い (S3a より前の app) ときも止まる。元の文の「verify」にあたるのは、V8a では stand-up の gate である。
+    - V8b (`rules`・`detect`、後続): 元の文の 1 文目と 3 文目 (customRules の 1 名を消した環境で課金の前に止まる、platform の tree に rule 名の写しが無い) と、`detect` なら detectRunner が有効であること (C7 の platform の側)。追跡 = Qfour/falco-ctf-platform#335。期限 = customRules を要る課題、または detect を含むコースを、event の scope に入れる前。
+    - 分けた理由: 調査型の課題を main に置く ADR-0056 A7 の前提は、`answers` の gate だけである。`rules` の解決には、pin した Falco 版の default ruleset の rule 名の集合が要り、別の作業になる。
+    - 要求を狭めた点: 元の文の 2 文目 (`requirements:` の無い ref で止まる) は、scenario を設定した回にだけ効く。全課題の回 (`scoreboardScenario` が空) には `scenario.yaml` も `requirements:` も無く、platform は課題の定義 (`challenges/*/falco-rule.yaml` の top-level `type: investigate`) を読む (契約表 (b) の行。CTO の決定 2026-11-25)。
 - **V9 (S4)**: 3 層の優先と丸ごとの置き換えの単体 test。範囲外を指す overlay と、外の課題を参照する文で赤になる。
 - **V10 (S5)**: module.yaml の集合 ⊆ 生成された scenario の集合 (CI)。runbook の部分は機械の確認が「無し」。
 
