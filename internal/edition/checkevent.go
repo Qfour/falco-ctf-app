@@ -353,7 +353,8 @@ func CheckEvent(in CheckInput) (*CheckedEvent, CheckReport, error) {
 }
 
 // checkEditions is step 4 for every challenge of the scope, in the order of the challenge ids:
-// E1 (ParseSpec) and, when the file parsed, E2 and B8 (a1) (CheckQuestions) and B8 (a2)
+// E1 (ParseSpec) and, when the file parsed, E2 and B8 (a1) (CheckQuestions), E2 of `blocks` and
+// `clues` against the template (CheckBlocksAndClues, amendment 28) and B8 (a2)
 // (CheckSeatSpace for the number of seats given, the rule being B8 and not the renderer's E3),
 // and the template run through the lexer of the marks. The parsed spec is kept for B7. It
 // lists what every challenge has; a challenge whose file did not parse has nothing more checked.
@@ -369,6 +370,7 @@ func checkEditions(scope Scope, editions map[string]*eventEdition, seats int) er
 		ed.spec = spec
 		errs = append(errs,
 			spec.CheckQuestions(cid, scope[cid]),
+			spec.CheckBlocksAndClues(cid, ed.template),
 			spec.CheckSeatSpace(cid, scope[cid], seats, RuleVocabSpace),
 			checkTemplateMarks(cid, ed.template))
 	}

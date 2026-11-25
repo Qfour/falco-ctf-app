@@ -20,13 +20,14 @@ import (
 
 // specSlot is a slot as text: a field that is "" is not written.
 type specSlot struct {
-	name, role, question, decoys, format, length, vocab, window string
+	name, role, question, decoys, format, length, vocab, window, clues string
 }
 
-// specDoc is an edition.yaml as text. A version, base or fixed that is "" is not written.
+// specDoc is an edition.yaml as text. A version, base, fixed or blocks that is "" is not
+// written.
 type specDoc struct {
-	version, base, fixed string
-	slots                []specSlot
+	version, base, fixed, blocks string
+	slots                        []specSlot
 }
 
 func (d specDoc) yaml() []byte {
@@ -40,6 +41,9 @@ func (d specDoc) yaml() []byte {
 	if d.fixed != "" {
 		b.WriteString("fixed: " + d.fixed + "\n")
 	}
+	if d.blocks != "" {
+		b.WriteString("blocks: " + d.blocks + "\n")
+	}
 	if len(d.slots) == 0 {
 		b.WriteString("slots: []\n")
 		return []byte(b.String())
@@ -49,7 +53,7 @@ func (d specDoc) yaml() []byte {
 		b.WriteString("  - name: " + s.name + "\n")
 		for _, f := range [][2]string{
 			{"role", s.role}, {"question", s.question}, {"decoys", s.decoys}, {"format", s.format},
-			{"length", s.length}, {"vocab", s.vocab}, {"window", s.window},
+			{"length", s.length}, {"vocab", s.vocab}, {"window", s.window}, {"clues", s.clues},
 		} {
 			if f[1] != "" {
 				b.WriteString("    " + f[0] + ": " + f[1] + "\n")
@@ -312,6 +316,7 @@ func TestParseSpec_RefusesTheFile(t *testing.T) {
 func (d specDoc) withVersion(v string) specDoc { d.version = v; return d }
 func (d specDoc) withBase(v string) specDoc    { d.base = v; return d }
 func (d specDoc) withFixed(v string) specDoc   { d.fixed = v; return d }
+func (d specDoc) withBlocks(v string) specDoc  { d.blocks = v; return d }
 
 // V61 and V18: one slot with one defect (the edited slot is the filler unless a case
 // says another).

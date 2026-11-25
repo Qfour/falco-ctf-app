@@ -10,6 +10,7 @@ package edition_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Qfour/falco-ctf-app/internal/edition"
+	"github.com/Qfour/falco-ctf-app/internal/edition/editiontest"
 )
 
 func TestCheckEvent_AcceptsAnEventThatEveryCheckAccepts(t *testing.T) {
@@ -183,6 +185,21 @@ func TestCheckEvent_EachCheckBrokenAloneRefusesTheEvent(t *testing.T) {
 		{name: "E2: decoys below K", brk: func(f *cevFix) {
 			f.put("edition-root/"+demoCID+"/"+edition.SpecFileName, cevSpec(cevOpts{nameWords: 100, decoys: 3}))
 		}, wantRules: []string{"E2"}, onlyRules: true},
+		{name: "E2: a block of a file the template does not have (amendment 28)", brk: func(f *cevFix) {
+			f.rewrite("edition-root/"+demoCID+"/"+edition.SpecFileName, func(s string) string {
+				return s + "blocks:\n  - {file: missing.txt, from: 1, to: 1}\n"
+			})
+		}, wantRules: []string{"E2"}, onlyRules: true},
+		{name: "E2: a clue that is not a word of the template (amendment 28)", brk: func(f *cevFix) {
+			f.rewrite("edition-root/"+demoCID+"/"+edition.SpecFileName, func(s string) string {
+				return strings.Replace(s, "    question: q4\n", "    question: q4\n    clues: [no-such-word]\n", 1)
+			})
+		}, wantRules: []string{"E2"}, onlyRules: true},
+		{name: "E2: a filler of one word (amendment 28 (c))", brk: func(f *cevFix) {
+			f.rewrite("edition-root/"+demoCID+"/"+edition.SpecFileName, func(s string) string {
+				return strings.Replace(s, "      - [n0, n1, n2]\n", "      - [n0]\n", 1)
+			})
+		}, wantRules: []string{"E2"}, onlyRules: true},
 		{name: "B8 (a1): a name vocabulary of 99 words", brk: func(f *cevFix) {
 			f.put("edition-root/"+demoCID+"/"+edition.SpecFileName, cevSpec(cevOpts{nameWords: 99, decoys: 9}))
 		}, wantRules: []string{"B8"}, onlyRules: true},
@@ -341,6 +358,35 @@ func TestCheckEvent_ABadMarkInTheTemplateIsE3(t *testing.T) {
 	err, report := f.refused("a mark outside the grammar")
 	if isInputErr(err) || !slices.Equal(cevRuleSet(err), []string{"E3"}) || report.OverlapRan {
 		t.Errorf("rules %v, report %+v, err %v; want E3 only, before B4", cevRuleSet(err), report, err)
+	}
+}
+
+// Amendment 28 (A7-x PR 1): an event edition that declares a block over the lines of when's
+// group and a clue of when is accepted, with the bundles the renderer drew without them (the
+// renderer does not read either yet, so the bundles are the same).
+func TestCheckEvent_AcceptsBlocksAndClues(t *testing.T) {
+	f := newGoodCevFix(t)
+	from, to := 0, 0
+	for i, ln := range strings.Split(f.tmpl, "\n") {
+		if strings.HasPrefix(ln, "when-") {
+			if from == 0 {
+				from = i + 1
+			}
+			to = i + 1
+		}
+	}
+	if from == 0 || to-from != editiontest.GoodDecoys {
+		t.Fatalf("the lines of when's group are %d..%d: the fixture's template changed", from, to)
+	}
+	f.rewrite("edition-root/"+demoCID+"/"+edition.SpecFileName, func(s string) string {
+		s = strings.Replace(s, "    question: q4\n", "    question: q4\n    clues: [when-answer]\n", 1)
+		return s + fmt.Sprintf("blocks:\n  - {file: %s, from: %d, to: %d}\n", cevTemplateName, from, to)
+	})
+	if !strings.Contains(f.read("edition-root/"+demoCID+"/"+edition.SpecFileName), "clues: [when-answer]") {
+		t.Fatal("the clue was not written: the test does not test")
+	}
+	if ev, _, err := f.check(); err != nil || ev == nil {
+		t.Fatalf("an edition with a block and a clue was refused: %v", err)
 	}
 }
 

@@ -16,7 +16,8 @@ import (
 )
 
 const (
-	// RuleSpecQuestion is D10 E2: edition.yaml against the challenge's questions.
+	// RuleSpecQuestion is D10 E2: edition.yaml against the challenge's questions, and its
+	// `blocks` and `clues` against the template (specblocks.go, amendment 28).
 	RuleSpecQuestion = "E2"
 	// RuleVocabSpace is D10 B8 (a): the answer space of an answer slot is at least D3
 	// (a)'s 100 x attempts.
@@ -52,7 +53,7 @@ func VocabSpace(format string, vocab [][]string) (*big.Int, error) {
 
 // CheckQuestions holds the edition of challenge cid to the challenge's questions (qs:
 // Scope[cid]). It returns nil, or an errors.Join of *Violation (at most maxViolations
-// listed: the answer slots in file order, then `fixed`, then the questions in catalog
+// listed: the slots in file order, then `fixed`, then the questions in catalog
 // order). It does not stop at the first one.
 //
 //   - E2: every answer slot names a question of the challenge that can vary per seat; every
@@ -64,7 +65,8 @@ func VocabSpace(format string, vocab [][]string) (*big.Int, error) {
 //     slot's vocabulary and window suit its question's format: a path or name question has
 //     a vocabulary (a name's is one list, of words in the name format) and no window, a
 //     timestamp question has a window and no vocabulary, a hexid question has neither.
-//     (E1 held the words to a path element only, for want of the format.)
+//     (E1 held the words to a path element only, for want of the format.) A filler has more
+//     than one value (checkFillerSpace, amendment 28 (c)).
 //   - B8 (a): the answer space of each answer slot, answerformat.Space from the question's
 //     params, or VocabSpace for path and name, against answerformat.CheckSpaceN (100 x
 //     attempts).
@@ -84,6 +86,7 @@ func (s *Spec) CheckQuestions(cid string, qs []catalog.Question) error {
 		at := fmt.Sprintf("slots[%d]", i)
 		switch sl.Role {
 		case RoleFiller:
+			checkFillerSpace(sl, at, add)
 			continue
 		case RoleAnswer:
 		default:
@@ -128,6 +131,24 @@ func (s *Spec) CheckQuestions(cid string, qs []catalog.Question) error {
 		}
 	}
 	return c.err()
+}
+
+// checkFillerSpace refuses a filler that has one value (E2, ADR-0056 amendment 28 (c)): a
+// vocabulary of one word at every position, or a timestamp window of one second. Its value is
+// the same for every seat, so it is a literal written as a slot, and B17 would take it for a
+// word in which the lines of a group may differ. A fact that tells the answer apart is written
+// as text and declared in the answer slot's `clues`. A hexid filler has 16^length values.
+func checkFillerSpace(sl *Slot, at string, add func(rule, msg, qid, slot, at string, err error)) {
+	switch {
+	case usesVocabulary(sl.Format):
+		if n, err := VocabSpace(sl.Format, sl.Vocab); err == nil && n.Cmp(big.NewInt(1)) == 0 {
+			add(RuleSpecQuestion, "a filler of one word is a literal: write it as text (and declare it in the answer slot's clues if it tells the answer apart)", "", sl.Name, at+".vocab", nil)
+		}
+	case sl.Format == answerformat.Timestamp:
+		if w := sl.Window; w != nil && w.From != nil && w.To != nil && *w.To-*w.From == 1 {
+			add(RuleSpecQuestion, "a timestamp filler of a one-second window is a literal: write the time as text", "", sl.Name, at+".window", nil)
+		}
+	}
 }
 
 // checkAnswerShape holds an answer slot's vocab and window to its question's format, which
