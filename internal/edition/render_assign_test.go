@@ -222,25 +222,26 @@ func TestRender_ASpaceBelowTwiceTheSeatsIsE3(t *testing.T) {
 func TestSpecCheckSeatSpace_IsOneComparisonForTheRendererAndTheValidator(t *testing.T) {
 	spec := rdSpec(t, rdDoc())
 	qs := rdQuestions()
-	if err := spec.CheckSeatSpace(demoCID, qs, 100, edition.RuleVocabSpace); err != nil {
+	tmpl := rdTemplate(spec)
+	if err := spec.CheckSeatSpace(demoCID, qs, tmpl, 100, edition.RuleVocabSpace); err != nil {
 		t.Errorf("100 seats in a space of 200: %v", err)
 	}
-	err := spec.CheckSeatSpace(demoCID, qs, 101, edition.RuleVocabSpace)
+	err := spec.CheckSeatSpace(demoCID, qs, tmpl, 101, edition.RuleVocabSpace)
 	if got := rules(err); !slices.Equal(got, []string{"B8"}) {
 		t.Errorf("101 seats as the validator: rules = %v, want [B8]", got)
 	}
-	if got := rules(spec.CheckSeatSpace(demoCID, qs, 101, edition.RuleSpecRender)); !slices.Equal(got, []string{"E3"}) {
+	if got := rules(spec.CheckSeatSpace(demoCID, qs, tmpl, 101, edition.RuleSpecRender)); !slices.Equal(got, []string{"E3"}) {
 		t.Errorf("101 seats as the renderer: rules = %v, want [E3]", got)
 	}
 	if len(rdViolations(err)) != 1 {
 		t.Errorf("%d violations, want one per answer slot that is short (who)", len(rdViolations(err)))
 	}
 	rdNoLeak(t, "CheckSeatSpace", err, nil)
-	if spec.CheckSeatSpace(demoCID, qs, 0, edition.RuleSpecRender) == nil {
+	if spec.CheckSeatSpace(demoCID, qs, tmpl, 0, edition.RuleSpecRender) == nil {
 		t.Error("no seat was accepted")
 	}
 	var none *edition.Spec
-	if none.CheckSeatSpace(demoCID, qs, 1, edition.RuleSpecRender) == nil {
+	if none.CheckSeatSpace(demoCID, qs, tmpl, 1, edition.RuleSpecRender) == nil {
 		t.Error("a missing spec was accepted")
 	}
 }

@@ -371,7 +371,7 @@ func checkEditions(scope Scope, editions map[string]*eventEdition, seats int) er
 		errs = append(errs,
 			spec.CheckQuestions(cid, scope[cid]),
 			spec.CheckBlocksAndClues(cid, ed.template),
-			spec.CheckSeatSpace(cid, scope[cid], seats, RuleVocabSpace),
+			spec.CheckSeatSpace(cid, scope[cid], ed.template, seats, RuleVocabSpace),
 			checkTemplateMarks(cid, ed.template))
 	}
 	return errors.Join(errs...)

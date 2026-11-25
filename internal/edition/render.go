@@ -279,7 +279,7 @@ func render(in RenderInput) (*Rendered, error) {
 		return nil, err
 	}
 	// B8 (a2), before anything is drawn: a space below 2 x the seats is E3, whatever the key.
-	if err := in.Spec.CheckSeatSpace(in.CID, in.Questions, len(in.Seats), RuleSpecRender); err != nil {
+	if err := in.Spec.CheckSeatSpace(in.CID, in.Questions, in.Template, len(in.Seats), RuleSpecRender); err != nil {
 		return nil, err
 	}
 	slots, err := renderSlots(in.CID, in.Spec, in.Questions)
