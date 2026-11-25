@@ -6,7 +6,7 @@
 2026-10-21T17:11:24Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host=share-76.example port=443 status=200 bytes_out=9120 rule=preview-fetch
 2026-10-21T17:12:17Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host=xfer-29.example port=443 status=403 bytes_out=0 rule=category-blocked
 2026-10-21T17:17:55Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host=assets-76.example port=443 status=200 bytes_out=5518 rule=preview-fetch
-2026-10-21T17:18:43Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host=depot-40.example port=443 status=200 bytes_out=31002 rule=preview-fetch
+2026-10-21T17:18:35Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host=depot-40.example port=443 status=200 bytes_out=31002 rule=preview-fetch
 2026-10-21T17:19:13Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host=mirror-58.example port=443 status=403 bytes_out=0 rule=category-blocked
 2026-10-21T17:21:35Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host=media-102.example port=443 status=200 bytes_out=27764 rule=preview-fetch
 2026-10-21T17:23:01Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host=files-25.example port=443 status=200 bytes_out=12045 rule=preview-fetch

@@ -10,10 +10,11 @@ version: 1
 # literal 17:11:48 (Q1 "first": margin 108 s after the window's last second).
 #
 # There is no fixed question (amendment 26: a fixed `sequence` cannot differ from the public
-# practice edition without rewriting the story), so an event edition copies template/ and the
-# slots of this file as they are; nothing of the story has to be rewritten per edition. If it
-# moves time.base, it moves EVERY literal time of this template and of 51's template by the
-# same amount, and 51's time.base with it (B15, B16).
+# practice edition without rewriting the story). An event edition does NOT copy this template:
+# B4 (2) refuses a copy and B18 (amendment 27) refuses the shape of an answer line of it, so
+# the event's template is rewritten. If an event edition moves time.base, it moves EVERY
+# literal time of its 50 and 51 templates by the same amount, and 51's time.base with it
+# (B15, B16).
 time:
   base: "2026-10-21T17:00:00Z"
 slots:
@@ -63,16 +64,19 @@ slots:
          wrk-91.bin]
   # Q4 survey-file: the file the intruder's shell wrote what it found into, before the
   # config and credential reads (no alert, no line in nimbus-desk.log). 1 x 1 x 16 x 32 = 512
-  # paths. The 12 decoys are the web service's own cache files under the same home directory,
-  # also without a log line: 2 before 17:00 (before any first shell) and 10 after the first
-  # refused send (17:23:40), so none lies between the first shell and the config read, and
-  # none in Q3's read-to-deny interval. The only file of this shape between the first shell
-  # and the config read is the answer; the three /tmp files there have their log lines. So the
-  # order of the incident, built across the alerts, the inventory and the log, decides.
+  # paths. The 20 decoys are the web service's own files under the same home directory:
+  #   - 9 before 17:00 (before any seat's first shell), without a log line;
+  #   - 9 between 17:10 and the config read (17:18:44), so after every seat's first shell,
+  #     each with a line of nimbus-desk.log of the same time and the same bytes;
+  #   - 2 after the first refused send (17:23:40), without a log line.
+  # None lies in Q3's read-to-deny interval. With the prompt's "before the config read": the
+  # directory leaves 19, "after the first shell" and the directory leave 10, "no log line" and
+  # the directory leave 10. Only the order (after the first shell, before the config read)
+  # together with the log (no line of the same time and bytes) leaves one.
   - name: survey
     role: answer
     question: survey-file
-    decoys: 12
+    decoys: 20
     vocab:
       - [home]
       - [desk]

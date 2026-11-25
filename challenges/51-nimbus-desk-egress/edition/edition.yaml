@@ -94,18 +94,19 @@ slots:
          xfer-91.example, xfer-95.example, xfer-102.example, xfer-118.example, xfer-134.example, xfer-151.example, xfer-167.example, xfer-183.example]
   # Q6 lookup-name: the name the intruder's shell looked up in the cluster DNS in the stage
   # that is ATT&CK Discovery (the probe of the Kubernetes API server, 17:15:32). Its answer is
-  # the API server's address 192.0.2.1, the destination of that alert. The 14 decoys are
-  # internal names of the same shape (*.int.example, answers 192.0.2.2..16, the API's
-  # neighbours included) that the web service and the other pods resolve: 9 of them inside the
-  # stage (17:14:07 to 17:18:44, 6 of them from the same pod), so "the lookups of the stage"
-  # leave 10 and "the same pod in the stage" leaves 7. The last lookup of the same pod before
-  # the probe is a decoy, so "just before the connection" does not decide either. Only the
-  # DNS answer = the alert's destination decides. The vocabulary is disjoint from dest's (no cross-question collision:
-  # the renderer keeps values apart within a slot group only). 16 x 32 = 512 names.
+  # the API server's address 192.0.2.1, the destination of that alert. The 20 decoys are
+  # internal names of the same shape (*.int.example, answers 192.0.2.2..22, the API's
+  # neighbours and the nine 192.0.2.1x that a prefix match catches included) that the web
+  # service and the other pods resolve. Between the shell (17:14:07) and the probe (17:15:32)
+  # there are 13 of them, 11 from the same pod, so "the same pod between the shell and the
+  # connection" leaves 12; the first and the last lookup of the same pod in that span are
+  # decoys. Only the DNS answer = the alert's destination (an exact match) decides. The
+  # vocabulary is disjoint from dest's (the renderer keeps values apart within a slot group
+  # only). 16 x 32 = 512 names.
   - name: peer
     role: answer
     question: lookup-name
-    decoys: 14
+    decoys: 20
     vocab:
       - [ctl-03.int.example, ctl-07.int.example, ctl-11.int.example, ctl-14.int.example, ctl-18.int.example, ctl-21.int.example, ctl-25.int.example, ctl-29.int.example,
          ctl-32.int.example, ctl-36.int.example, ctl-40.int.example, ctl-43.int.example, ctl-47.int.example, ctl-51.int.example, ctl-54.int.example, ctl-58.int.example,
@@ -177,50 +178,61 @@ slots:
   # fixed points they sit between: 17:10:00 (600) a refused legacy-status connection, 17:14:07
   # (847) the shell, 17:15:32 (932) the API probe, 17:18:44 (1124) the config read, 17:22:47
   # (1367) a mail, 17:23:40 / 17:23:55 / 17:24:11 (1420 / 1435 / 1451) the refused sends.
-  # cluster-dns.log:
+  # cluster-dns.log, in the order of its lines:
   - {name: dns-d1, role: filler, format: timestamp, window: {from: 605, to: 625}}
-  - {name: dns-d11, role: filler, format: timestamp, window: {from: 630, to: 650}}
   - {name: dns-d2, role: filler, format: timestamp, window: {from: 655, to: 675}}
-  - {name: dns-d13, role: filler, format: timestamp, window: {from: 680, to: 700}}
   - {name: dns-d3, role: filler, format: timestamp, window: {from: 705, to: 725}}
-  - {name: dns-p1, role: filler, format: timestamp, window: {from: 740, to: 770}}
-  - {name: dns-p2, role: filler, format: timestamp, window: {from: 850, to: 862}}
-  - {name: dns-p3, role: filler, format: timestamp, window: {from: 863, to: 874}}
-  - {name: dns-peer, role: filler, format: timestamp, window: {from: 876, to: 925}}
-  - {name: dns-p4, role: filler, format: timestamp, window: {from: 926, to: 931}}
-  - {name: dns-p5, role: filler, format: timestamp, window: {from: 935, to: 955}}
-  - {name: dns-d12, role: filler, format: timestamp, window: {from: 960, to: 980}}
-  - {name: dns-p6, role: filler, format: timestamp, window: {from: 985, to: 1005}}
-  - {name: dns-d5, role: filler, format: timestamp, window: {from: 1010, to: 1030}}
-  - {name: dns-p7, role: filler, format: timestamp, window: {from: 1035, to: 1055}}
-  - {name: dns-d14, role: filler, format: timestamp, window: {from: 1060, to: 1075}}
-  - {name: dns-p8, role: filler, format: timestamp, window: {from: 1076, to: 1090}}
-  - {name: dns-d6, role: filler, format: timestamp, window: {from: 1091, to: 1100}}
-  - {name: dns-p9, role: filler, format: timestamp, window: {from: 1101, to: 1110}}
-  - {name: dns-p10, role: filler, format: timestamp, window: {from: 1111, to: 1122}}
+  - {name: dns-p17, role: filler, format: timestamp, window: {from: 740, to: 770}}
+  # between the shell (847) and the probe (932): 14 lines of the same small width.
+  - {name: dns-p1, role: filler, format: timestamp, window: {from: 848, to: 854}}
+  - {name: dns-p11, role: filler, format: timestamp, window: {from: 854, to: 860}}
+  - {name: dns-p2, role: filler, format: timestamp, window: {from: 860, to: 866}}
+  - {name: dns-p3, role: filler, format: timestamp, window: {from: 866, to: 871}}
+  - {name: dns-p4, role: filler, format: timestamp, window: {from: 871, to: 876}}
+  - {name: dns-p12, role: filler, format: timestamp, window: {from: 876, to: 881}}
+  - {name: dns-p5, role: filler, format: timestamp, window: {from: 881, to: 886}}
+  - {name: dns-peer, role: filler, format: timestamp, window: {from: 886, to: 892}}
+  - {name: dns-p6, role: filler, format: timestamp, window: {from: 892, to: 897}}
+  - {name: dns-p7, role: filler, format: timestamp, window: {from: 897, to: 902}}
+  - {name: dns-p8, role: filler, format: timestamp, window: {from: 902, to: 907}}
+  - {name: dns-p9, role: filler, format: timestamp, window: {from: 907, to: 913}}
+  - {name: dns-p10, role: filler, format: timestamp, window: {from: 913, to: 919}}
+  - {name: dns-p13, role: filler, format: timestamp, window: {from: 919, to: 931}}
+  # the rest of the Discovery stage, up to the config read (1124):
+  - {name: dns-p14, role: filler, format: timestamp, window: {from: 962, to: 985}}
+  - {name: dns-d5, role: filler, format: timestamp, window: {from: 990, to: 1015}}
+  - {name: dns-p15, role: filler, format: timestamp, window: {from: 1018, to: 1045}}
+  - {name: dns-p16, role: filler, format: timestamp, window: {from: 1070, to: 1088}}
+  - {name: dns-d6, role: filler, format: timestamp, window: {from: 1090, to: 1110}}
+  # after the config read: 10 lookups that the proxy never fetched lie between it and the
+  # first refused send (d11 d14 d15 d13 d16 d12 d20 d17 d18 and the answer).
   - {name: dns-d7, role: filler, format: timestamp, window: {from: 1130, to: 1150}}
-  - {name: dns-d15, role: filler, format: timestamp, window: {from: 1160, to: 1190}}
-  - {name: dns-d16, role: filler, format: timestamp, window: {from: 1200, to: 1240}}
-  - {name: dns-d4, role: filler, format: timestamp, window: {from: 1250, to: 1290}}
-  - {name: dns-p11, role: filler, format: timestamp, window: {from: 1300, to: 1360}}
-  - {name: dns-d8, role: filler, format: timestamp, window: {from: 1368, to: 1380}}
-  - {name: dns-d17, role: filler, format: timestamp, window: {from: 1385, to: 1400}}
-  - {name: dns-dest, role: filler, format: timestamp, window: {from: 1405, to: 1420}}
-  - {name: dns-d18, role: filler, format: timestamp, window: {from: 1421, to: 1435}}
+  - {name: dns-d11, role: filler, format: timestamp, window: {from: 1151, to: 1160}}
+  - {name: dns-d14, role: filler, format: timestamp, window: {from: 1161, to: 1170}}
+  - {name: dns-d15, role: filler, format: timestamp, window: {from: 1172, to: 1190}}
+  - {name: dns-d13, role: filler, format: timestamp, window: {from: 1192, to: 1200}}
+  - {name: dns-d16, role: filler, format: timestamp, window: {from: 1202, to: 1240}}
+  - {name: dns-d12, role: filler, format: timestamp, window: {from: 1242, to: 1248}}
+  - {name: dns-d4, role: filler, format: timestamp, window: {from: 1250, to: 1285}}
+  - {name: dns-d20, role: filler, format: timestamp, window: {from: 1288, to: 1320}}
+  - {name: dns-p18, role: filler, format: timestamp, window: {from: 1325, to: 1362}}
+  # before the first refused send (1420): the last lookup before it is a decoy (d18).
+  - {name: dns-d8, role: filler, format: timestamp, window: {from: 1368, to: 1378}}
+  - {name: dns-d17, role: filler, format: timestamp, window: {from: 1379, to: 1390}}
+  - {name: dns-dest, role: filler, format: timestamp, window: {from: 1391, to: 1404}}
+  - {name: dns-d18, role: filler, format: timestamp, window: {from: 1405, to: 1420}}
+  - {name: dns-d19, role: filler, format: timestamp, window: {from: 1421, to: 1435}}
   - {name: dns-d9, role: filler, format: timestamp, window: {from: 1452, to: 1480}}
-  - {name: dns-d19, role: filler, format: timestamp, window: {from: 1500, to: 1560}}
-  - {name: dns-p12, role: filler, format: timestamp, window: {from: 1570, to: 1610}}
+  - {name: dns-p19, role: filler, format: timestamp, window: {from: 1570, to: 1610}}
   - {name: dns-d10, role: filler, format: timestamp, window: {from: 1620, to: 1680}}
-  - {name: dns-d20, role: filler, format: timestamp, window: {from: 1720, to: 1780}}
-  - {name: dns-p13, role: filler, format: timestamp, window: {from: 1800, to: 1850}}
-  - {name: dns-p14, role: filler, format: timestamp, window: {from: 2150, to: 2300}}
+  - {name: dns-p20, role: filler, format: timestamp, window: {from: 1800, to: 1850}}
   - {name: dns-docs-e, role: filler, format: timestamp, window: {from: 2410, to: 2470}}
-  # egress-proxy.log:
+  # egress-proxy.log, in the order of its lines:
   - {name: px-d1, role: filler, format: timestamp, window: {from: 626, to: 640}}
   - {name: px-d2, role: filler, format: timestamp, window: {from: 676, to: 700}}
   - {name: px-d3, role: filler, format: timestamp, window: {from: 726, to: 739}}
   - {name: px-d5, role: filler, format: timestamp, window: {from: 1031, to: 1090}}
-  - {name: px-d6, role: filler, format: timestamp, window: {from: 1101, to: 1128}}
+  - {name: px-d6, role: filler, format: timestamp, window: {from: 1111, to: 1128}}
   - {name: px-d7, role: filler, format: timestamp, window: {from: 1151, to: 1159}}
   - {name: px-d4, role: filler, format: timestamp, window: {from: 1291, to: 1299}}
   - {name: px-d8, role: filler, format: timestamp, window: {from: 1381, to: 1384}}
