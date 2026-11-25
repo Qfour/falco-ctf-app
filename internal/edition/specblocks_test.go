@@ -4,10 +4,11 @@ package edition_test
 // their shape (E1, ParseSpec), their fit to the template (E2, Spec.CheckBlocksAndClues: one group
 // in a block, one shape of its lines, a time slot of its own for each line), B8 (a2)'s bound for a
 // group in a block (CheckSeatSpace), and the filler of one value (E2, CheckQuestions:
-// speccheck_test.go's table). One case, one defect, and the one violation that must name it. The
-// renderer does not read `blocks` or `clues` yet: a render with them is byte for byte the render
-// without them. Every word, slot and line is a placeholder of no meaning. The text helpers
-// (specDoc, ...) are spec_test.go's, the render helpers render_test.go's.
+// speccheck_test.go's table). One case, one defect, and the one violation that must name it. What
+// the renderer and B7 do with a block (A7-x PR 2) is block_test.go's; here, only that a block
+// changes nothing outside its group and its lines. Every word, slot and line is a placeholder of
+// no meaning. The text helpers (specDoc, ...) are spec_test.go's, the render helpers
+// render_test.go's.
 
 import (
 	"errors"
@@ -443,9 +444,24 @@ func sbRenderTemplate(spec *edition.Spec) ([]edition.BundleFile, int) {
 	return []edition.BundleFile{sbFile("a.txt", a), sbFile("c.txt", c)}, len(c)
 }
 
-// This stage does not reorder a block: the same edition with `blocks` and `clues` renders to the
-// same bundles and the same answer rows, for every seat, as without them.
-func TestRender_BlocksAndCluesDoNotChangeTheOutput(t *testing.T) {
+// sbLineTime is the time of a line of sbRenderTemplate's c.txt (`<slot>=<time> pod-<i> shell`).
+func sbLineTime(t *testing.T, line string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(line, "=")
+	fs := strings.Fields(rest)
+	if !ok || len(fs) == 0 {
+		t.Fatalf("a line of c.txt is not <slot>=<time> ...")
+	}
+	return fs[0]
+}
+
+// A block changes its own group and its own lines only (amendment 28 as revised, A7-x PR 2; this
+// test was "blocks and clues do not change the output" while the renderer did not read them). The
+// same edition with `blocks` and `clues` renders, for every seat, a.txt (no block) byte for byte
+// as without them, and the rows of every question but the block's (q4) alike. The first seat,
+// whom no earlier seat constrains (r1), gets the same values, and its block holds the same lines,
+// put in the order of their times.
+func TestRender_ABlockChangesOnlyItsGroupAndItsLines(t *testing.T) {
 	plain := rdDoc()
 	tmpl, lines := sbRenderTemplate(rdSpec(t, plain))
 	declared := plain.
@@ -462,11 +478,14 @@ func TestRender_BlocksAndCluesDoNotChangeTheOutput(t *testing.T) {
 		})
 	}
 	a, b := run(plain), run(declared)
-	if !slices.Equal(a.Rows, b.Rows) {
-		t.Error("the answer rows differ with blocks and clues")
+	if len(a.Rows) != len(b.Rows) || len(a.Bundles) != len(b.Bundles) {
+		t.Fatalf("%d rows and %d bundles, %d and %d with blocks", len(a.Rows), len(a.Bundles), len(b.Rows), len(b.Bundles))
 	}
-	if len(a.Bundles) != len(b.Bundles) {
-		t.Fatalf("%d bundles, %d with blocks and clues", len(a.Bundles), len(b.Bundles))
+	for i := range a.Rows {
+		ra, rb := a.Rows[i], b.Rows[i]
+		if (ra.QID != "q4" || ra.Seat == "seat-a") && ra != rb {
+			t.Errorf("row %d (seat %s, %s) differs with a block", i, ra.Seat, ra.QID)
+		}
 	}
 	for i := range a.Bundles {
 		fa, fb := a.Bundles[i].Files, b.Bundles[i].Files
@@ -474,8 +493,22 @@ func TestRender_BlocksAndCluesDoNotChangeTheOutput(t *testing.T) {
 			t.Fatalf("bundle %d differs in its seat or its number of files", i)
 		}
 		for j := range fa {
-			if fa[j].Name != fb[j].Name || string(fa[j].Data) != string(fb[j].Data) {
-				t.Errorf("seat %s, file %s: the bytes differ with blocks and clues", a.Bundles[i].Seat, fa[j].Name)
+			if fa[j].Name != fb[j].Name {
+				t.Fatalf("seat %s: file %d is named otherwise with a block", a.Bundles[i].Seat, j)
+			}
+			if fa[j].Name == "a.txt" && string(fa[j].Data) != string(fb[j].Data) {
+				t.Errorf("seat %s, a.txt (no block): the bytes differ with a block", a.Bundles[i].Seat)
+			}
+			if fa[j].Name != "c.txt" || a.Bundles[i].Seat != "seat-a" {
+				continue
+			}
+			want := strings.Split(strings.TrimSuffix(string(fa[j].Data), "\n"), "\n")
+			slices.SortStableFunc(want, func(x, y string) int { return strings.Compare(sbLineTime(t, x), sbLineTime(t, y)) })
+			if got := strings.Join(want, "\n") + "\n"; got != string(fb[j].Data) {
+				t.Error("seat-a, c.txt: the block is not the same lines in the order of their times")
+			}
+			if string(fa[j].Data) == string(fb[j].Data) {
+				t.Log("seat-a's lines of c.txt were in the order of their times already")
 			}
 		}
 	}

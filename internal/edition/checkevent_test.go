@@ -362,12 +362,14 @@ func TestCheckEvent_ABadMarkInTheTemplateIsE3(t *testing.T) {
 }
 
 // Amendment 28 (A7-x PR 1): an event edition that declares a block over the lines of when's
-// group and a clue of when is accepted, with the bundles the renderer drew without them (the
-// renderer does not read either yet, so the bundles are the same).
+// group and a clue of when is accepted. A7-x PR 2: the bundles are the renderer's output of that edition (the block's lines ordered by
+// their times, the group's columns apart between the seats), end to end through CheckEvent, for
+// the three seats, with the clue and without it. The same block declared after the render (the
+// bundles are the render of the edition without it, in the template's order) is refused by B7:
+// an edition changed after its render is not the edition of the bundles.
 func TestCheckEvent_AcceptsBlocksAndClues(t *testing.T) {
-	f := newGoodCevFix(t)
 	from, to := 0, 0
-	for i, ln := range strings.Split(f.tmpl, "\n") {
+	for i, ln := range strings.Split(editiontest.TemplateText(editiontest.GoodDecoys), "\n") {
 		if strings.HasPrefix(ln, "when-") {
 			if from == 0 {
 				from = i + 1
@@ -378,16 +380,47 @@ func TestCheckEvent_AcceptsBlocksAndClues(t *testing.T) {
 	if from == 0 || to-from != editiontest.GoodDecoys {
 		t.Fatalf("the lines of when's group are %d..%d: the fixture's template changed", from, to)
 	}
-	f.rewrite("edition-root/"+demoCID+"/"+edition.SpecFileName, func(s string) string {
-		s = strings.Replace(s, "    question: q4\n", "    question: q4\n    clues: [when-answer]\n", 1)
-		return s + fmt.Sprintf("blocks:\n  - {file: %s, from: %d, to: %d}\n", cevTemplateName, from, to)
+	block := func(clue bool) func(string) string {
+		return func(s string) string {
+			if clue {
+				s = strings.Replace(s, "    question: q4\n", "    question: q4\n    clues: [when-answer]\n", 1)
+			}
+			return s + fmt.Sprintf("blocks:\n  - {file: %s, from: %d, to: %d}\n", cevTemplateName, from, to)
+		}
+	}
+	specPath := "edition-root/" + demoCID + "/" + edition.SpecFileName
+	for _, clue := range []bool{true, false} {
+		t.Run(fmt.Sprintf("clue=%v", clue), func(t *testing.T) {
+			f := newCevFix(t, cevOpts{nameWords: editiontest.GoodNameWords, decoys: editiontest.GoodDecoys, specEdit: block(clue)})
+			spec := f.read(specPath)
+			if !strings.Contains(spec, "blocks:") || strings.Contains(spec, "clues: [when-answer]") != clue {
+				t.Fatal("the block or the clue was not written as asked: the test does not test")
+			}
+			// The render ordered the block in every seat (the bundles are not the template's order).
+			for _, seat := range f.seats {
+				lines := strings.Split(f.read("evidence/"+seat+"/"+demoCID+"/"+cevTemplateName), "\n")
+				prev := ""
+				for _, ln := range lines[from-1 : to] {
+					_, v, ok := strings.Cut(ln, " = ")
+					if !ok || v <= prev {
+						t.Fatalf("seat %s: the block of the render is not in strictly ascending time", seat)
+					}
+					prev = v
+				}
+			}
+			if ev, _, err := f.check(); err != nil || ev == nil {
+				t.Fatalf("an edition with a block (clue %v) and the renderer's bundles was refused: %v", clue, err)
+			}
+		})
+	}
+	t.Run("declared after the render", func(t *testing.T) {
+		f := newGoodCevFix(t)
+		f.rewrite(specPath, block(true))
+		err, _ := f.refused("a block declared after the render")
+		if got := rules(err); !slices.Equal(got, []string{"B7"}) {
+			t.Errorf("rules = %v, want [B7]: %v", got, err)
+		}
 	})
-	if !strings.Contains(f.read("edition-root/"+demoCID+"/"+edition.SpecFileName), "clues: [when-answer]") {
-		t.Fatal("the clue was not written: the test does not test")
-	}
-	if ev, _, err := f.check(); err != nil || ev == nil {
-		t.Fatalf("an edition with a block and a clue was refused: %v", err)
-	}
 }
 
 // V89 (A4e-2c): B5 holds the bundles to what the server shows, and the server shows the

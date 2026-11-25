@@ -21,7 +21,8 @@ package edition
 //   - the mark of an answer or a decoy has a token byte next to it (a filler's may);
 //   - a declared slot, a decoy included, is named by no mark in any file;
 //   - a bundle that a seat gets is larger than MaxBundleBytes once the values are put in,
-//     or holds a `{{ctf:` after it (fill).
+//     or holds a `{{ctf:` after it, or has a block whose lines cannot be put in the strict
+//     order of their times (fill, orderBlocks).
 
 import (
 	"bytes"
@@ -40,9 +41,11 @@ type tmplFile struct {
 	parts []TemplatePart
 }
 
-// compiledTemplate is a template that every rule above accepted, for one challenge.
+// compiledTemplate is a template that every rule above accepted, for one challenge, and the
+// blocks of each of its files (blockForms; none for an edition without blocks).
 type compiledTemplate struct {
-	files []tmplFile
+	files  []tmplFile
+	blocks map[string][]blockForm
 }
 
 // compileTemplate holds the files to the rules in the header and to the declared slots.
@@ -146,8 +149,9 @@ func compileTemplate(cid string, files []BundleFile, slots []*renderSlot) (*comp
 }
 
 // fill is the files of the bundle of one seat: the parts with the value of each mark put
-// in. A mark with no value, a bundle over MaxBundleBytes and an output that holds a
-// `{{ctf:` are refused (a mark must not survive the render).
+// in, and then the lines of each block in the order of their times (orderBlocks). A mark with
+// no value, a block that cannot be ordered, a bundle over MaxBundleBytes and an output that
+// holds a `{{ctf:` are refused (a mark must not survive the render).
 func (ct *compiledTemplate) fill(cid, seat string, values map[string]string) ([]BundleFile, error) {
 	out := make([]BundleFile, 0, len(ct.files))
 	total := 0
@@ -164,14 +168,64 @@ func (ct *compiledTemplate) fill(cid, seat string, values map[string]string) ([]
 			}
 			b.WriteString(v)
 		}
-		if bytes.Contains(b.Bytes(), []byte(MarkOpen)) {
+		data := b.Bytes()
+		if forms := ct.blocks[f.name]; len(forms) > 0 {
+			ordered, msg := orderBlocks(data, forms)
+			if msg != "" {
+				return nil, newBundleViolation(RuleSpecRender, "the lines of a block cannot be put in the order of their times: "+msg, cell{seat: seat, cid: cid}, f.name)
+			}
+			data = ordered
+		}
+		if bytes.Contains(data, []byte(MarkOpen)) {
 			return nil, newBundleViolation(RuleSpecRender, "a "+MarkOpen+" is left in the output", cell{seat: seat, cid: cid}, f.name)
 		}
-		total += b.Len()
-		out = append(out, BundleFile{Name: f.name, Data: b.Bytes()})
+		total += len(data)
+		out = append(out, BundleFile{Name: f.name, Data: data})
 	}
 	if total > MaxBundleBytes {
 		return nil, newViolation(RuleSpecRender, "the bundle of the seat is larger than the limit of a bundle (512 KiB)", 0, cell{seat: seat, cid: cid}, nil)
 	}
 	return out, nil
+}
+
+// orderBlocks is the order of the lines of a block (ADR-0056 amendment 28, as revised): after the
+// marks are filled, the lines of each block of the file are put in the ascending order of their
+// times (lineTime, the word E2 makes the value of each line's time slot). A line keeps its bytes,
+// and the file keeps its line feeds: the lines are templateLines' (the text between line feeds),
+// joined again with one, and the file ends with a line feed when it did. The order is strict: the
+// draws keep the times of a block apart (r2), and two lines of one time are refused rather than
+// left in the template's order, so a tie is never decided by the template (which is public). It
+// returns the file, or why the block cannot be ordered (a message with no value).
+func orderBlocks(data []byte, forms []blockForm) ([]byte, string) {
+	lines := templateLines(data)
+	for _, f := range forms {
+		n := f.lines()
+		if f.from+n > len(lines) {
+			return nil, "the file has fewer lines than its block"
+		}
+		block := lines[f.from : f.from+n]
+		times := make([]string, n)
+		order := make([]int, n)
+		for i, ln := range block {
+			t, ok := lineTime(ln)
+			if !ok {
+				return nil, "a line of the block has no time"
+			}
+			times[i], order[i] = t, i
+		}
+		slices.SortStableFunc(order, func(a, b int) int { return strings.Compare(times[a], times[b]) })
+		sorted := make([][]byte, n)
+		for i, j := range order {
+			if i > 0 && times[order[i-1]] == times[j] {
+				return nil, "two lines of the block have one time"
+			}
+			sorted[i] = block[j]
+		}
+		copy(block, sorted)
+	}
+	out := bytes.Join(lines, []byte{'\n'})
+	if len(data) > 0 && data[len(data)-1] == '\n' {
+		out = append(out, '\n')
+	}
+	return out, ""
 }

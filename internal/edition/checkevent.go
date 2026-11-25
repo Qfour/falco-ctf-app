@@ -342,7 +342,7 @@ func CheckEvent(in CheckInput) (*CheckedEvent, CheckReport, error) {
 		Templates: templatesOf(editions),
 	}, OverlapTheta)
 	refusals = append(refusals, b4.err())
-	refusals = append(refusals, checkSpreads(scope, editions, bundles.bundles))
+	refusals = append(refusals, checkSpreads(scope, editions, bundles.bundles, table))
 	refusals = append(refusals, checkContinuity(bundles.rows, previous, !in.NoPrevious))
 	if err := errors.Join(refusals...); err != nil {
 		return nil, report, err
@@ -429,8 +429,9 @@ func templatesOf(editions map[string]*eventEdition) map[string][]BundleFile {
 
 // checkSpreads is step 7: for every challenge, B7 (CheckDecoySpread, which reads the template
 // and the spec of the event edition) and B8 (b) (CheckOutputSpace) on the bundles of all the
-// seats of that challenge. It lists what every challenge has.
-func checkSpreads(scope Scope, editions map[string]*eventEdition, read *Bundles) error {
+// seats of that challenge. B7 reads the answers table (a group in a block needs the seat's answer,
+// spreadblock.go). It lists what every challenge has.
+func checkSpreads(scope Scope, editions map[string]*eventEdition, read *Bundles, table *CheckedTable) error {
 	var errs []error
 	for _, cid := range scope.sortedCIDs() {
 		var ofChallenge []*Bundle
@@ -441,10 +442,25 @@ func checkSpreads(scope Scope, editions map[string]*eventEdition, read *Bundles)
 		}
 		ed := editions[cid]
 		errs = append(errs,
-			CheckDecoySpread(cid, ed.spec, scope[cid], ed.template, ofChallenge),
+			CheckDecoySpread(cid, ed.spec, scope[cid], ed.template, ofChallenge, seatAnswersOf(table.table, cid)),
 			CheckOutputSpace(cid, scope[cid], ofChallenge))
 	}
 	return errors.Join(errs...)
+}
+
+// seatAnswersOf is the rows of challenge cid in the answers table, in the form B7 reads them.
+func seatAnswersOf(tb *Table, cid string) SeatAnswers {
+	out := SeatAnswers{}
+	for _, r := range tb.rows {
+		if r.c.cid != cid {
+			continue
+		}
+		if out[r.c.seat] == nil {
+			out[r.c.seat] = map[string]string{}
+		}
+		out[r.c.seat][r.c.qid] = r.value
+	}
+	return out
 }
 
 // checkContinuity is D10 B10 (step 8): the (seat, cid) pairs of the previous digests are a subset

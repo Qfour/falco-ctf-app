@@ -151,7 +151,7 @@ func TestCheckEventRunsEveryGateBeforeItMakesTheEvent(t *testing.T) {
 	cases := []struct{ name, old, repl string }{
 		{"the continuity (B10) is not run", "\trefusals = append(refusals, checkContinuity(bundles.rows, previous, !in.NoPrevious))\n", ""},
 		{"B4 is not run", "\treport.Overlap = checkPracticeOverlap(", "\treport.Overlap = OverlapReport{}\n\t_ = checkPracticeOverlap_removed("},
-		{"B7 and B8 (b) are run twice", "\trefusals = append(refusals, checkSpreads(scope, editions, bundles.bundles))\n", "\trefusals = append(refusals, checkSpreads(scope, editions, bundles.bundles))\n\trefusals = append(refusals, checkSpreads(scope, editions, bundles.bundles))\n"},
+		{"B7 and B8 (b) are run twice", "\trefusals = append(refusals, checkSpreads(scope, editions, bundles.bundles, table))\n", "\trefusals = append(refusals, checkSpreads(scope, editions, bundles.bundles, table))\n\trefusals = append(refusals, checkSpreads(scope, editions, bundles.bundles, table))\n"},
 		{"the render record is not read", "\trecord, err := readRenderRecord(in.RenderRecordFile)\n", "\trecord, err := renderRecord{}, error(nil)\n"},
 		{"B12 is not run", "\tif record.scope != ScopeDigest(scored.Order) {\n", "\tif record.scope == \"\" {\n"},
 		{"the render record is read after the table", "\t// 2. The answers table.\n\ttable, runID, err := LoadEventTable(scored, in.AnswersFile)\n", "\t// 2. The answers table.\n\ttable, runID, err := LoadEventTable(scored, in.AnswersFile)\n\t_, _ = readRenderRecord(in.RenderRecordFile)\n"},

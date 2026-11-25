@@ -295,7 +295,7 @@ func TestTheSelfCheckOfTheRenderIsWired(t *testing.T) {
 	}
 
 	const (
-		decoyCall = "CheckDecoySpread(cid, ed.spec, scope[cid], ed.template, bundles[cid])"
+		decoyCall = "CheckDecoySpread(cid, ed.spec, scope[cid], ed.template, bundles[cid], answers[cid])"
 		decoyLine = "\t\t\t" + decoyCall + ",\n"
 		spaceLine = "\t\t\tCheckOutputSpace(cid, scope[cid], bundles[cid]))\n"
 		appendTo  = "\t\trefusals = append(refusals,\n"
