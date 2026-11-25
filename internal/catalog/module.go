@@ -1,12 +1,13 @@
 package catalog
 
 // module.go is the source side of ADR-0055 S2a: the parser of scenarios/<id>/module.yaml
-// (D3) and scenarios/<id>/course.yaml (D4). Nothing reads these files yet: the
-// generator (S2b) and the strict LoadScenario (S2c) are later PRs, so LoadScenario,
-// LoadScored and the shipped scenario.yaml files are untouched by this one.
+// (D3) and scenarios/<id>/course.yaml (D4). cmd/gen-scenarios composes them into
+// scenario.yaml (S2b), and LoadScenario requires one of them beside every scenario.yaml it
+// loads (S2c, LoadSource).
 //
-// Both files are decoded strictly: a regular file (not a symlink), one document, no
-// anchor, alias or merge key, and an unknown or repeated key at any depth is an error.
+// Both files, and the generated scenario.yaml (DecodeScenario), are decoded strictly by
+// decodeSource: a regular file (not a symlink), one document, no anchor, alias or merge
+// key, and an unknown or repeated key at any depth is an error.
 // Those rules are the ones edition.ParseSpec applies to edition.yaml; its size limit,
 // UTF-8 check and invisible / bidi character check (sourcehygiene.Hidden) are NOT applied
 // here. A module or a course has no flags, challenges or hints key, so a file that writes
@@ -212,16 +213,9 @@ func LoadCourse(path string) (Course, error) {
 // readSource reads path, which must be a regular file (a symlink is refused, whichever of
 // LoadSource, LoadModule and LoadCourse is the entry), and decodes it strictly into out.
 func readSource(path string, out any) error {
-	info, err := os.Lstat(path)
+	data, err := readRegular(path)
 	if err != nil {
-		return fmt.Errorf("read %q: %w", path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("read %q: not a regular file (a symlink is refused)", path)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read %q: %w", path, err)
+		return err
 	}
 	if err := decodeSource(data, out); err != nil {
 		return fmt.Errorf("parse %q: %w", path, err)
@@ -229,25 +223,51 @@ func readSource(path string, out any) error {
 	return nil
 }
 
+// readRegular is the bytes of path, which must be a regular file: a symlink is refused.
+func readRegular(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %q: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("read %q: not a regular file (a symlink is refused)", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %q: %w", path, err)
+	}
+	return data, nil
+}
+
 // decodeSource is the strict decode of a module.yaml or course.yaml: exactly one
 // document, no anchor, alias or merge key, then KnownFields(true) on the bytes.
 func decodeSource(data []byte, out any) error {
+	if _, err := sourceDocument(data); err != nil {
+		return err
+	}
+	return decodeStrictBytes(data, out)
+}
+
+// sourceDocument is the node checks of decodeSource: the one document of data, with no
+// anchor, alias or merge key. DecodeScenario looks at the nodes of the requirements block
+// (requirementsShape) between it and the strict decode.
+func sourceDocument(data []byte) (*yaml.Node, error) {
 	nodes := yaml.NewDecoder(bytes.NewReader(data))
 	var doc yaml.Node
 	if err := nodes.Decode(&doc); err != nil {
 		if errors.Is(err, io.EOF) {
-			return errors.New("the file holds no document")
+			return nil, errors.New("the file holds no document")
 		}
-		return err
+		return nil, err
 	}
 	var extra yaml.Node
 	if err := nodes.Decode(&extra); !errors.Is(err, io.EOF) {
-		return errors.New("the file holds more than one document")
+		return nil, errors.New("the file holds more than one document")
 	}
 	if n := findAnchorOrAlias(&doc); n != nil {
-		return fmt.Errorf("line %d: an anchor, an alias or a merge key is not allowed", n.Line)
+		return nil, fmt.Errorf("line %d: an anchor, an alias or a merge key is not allowed", n.Line)
 	}
-	return decodeStrictBytes(data, out)
+	return &doc, nil
 }
 
 // findAnchorOrAlias is the first node, in document order, that carries an anchor, is an

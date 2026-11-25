@@ -44,7 +44,7 @@ func TestCompose_FlattensInCourseOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantSrc := ComposedSource{Kind: KindCourse, Modules: []ComposedModule{{ID: "mod-a", Version: 1, Edition: "2h"}, {ID: "mod-b", Version: 1}}}
+	wantSrc := ScenarioSource{Kind: KindCourse, Modules: []ScenarioModule{{ID: "mod-a", Version: 1, Edition: "2h"}, {ID: "mod-b", Version: 1}}}
 	if got.ID != "course-x" || got.Title != "Course X" || !reflect.DeepEqual(got.Source, wantSrc) {
 		t.Fatalf("composed = %+v", got)
 	}
@@ -127,7 +127,7 @@ func TestComposeSolo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantSrc := ComposedSource{Kind: KindModule, Modules: []ComposedModule{{ID: "mod-b", Version: 1}}}
+	wantSrc := ScenarioSource{Kind: KindModule, Modules: []ScenarioModule{{ID: "mod-b", Version: 1}}}
 	if got.ID != "mod-b" || got.Title != "Title mod-b" || !slices.Equal(got.Challenges, []string{"03-c", "02-b"}) || !reflect.DeepEqual(got.Source, wantSrc) {
 		t.Fatalf("solo course of mod-b = %+v", got)
 	}

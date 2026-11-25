@@ -179,8 +179,9 @@ func TestLoadModuleAndCourse_RefuseASymlink(t *testing.T) {
 }
 
 // C6 / V4: the keys are exactly D3's and D4's at every depth, and the composed scenario's
-// are D5's, which has no tactics (D5, D6). A flags, challenges, hints or tactics field added
-// to any of these types would make the strict decode accept it, or the generator write it.
+// are D5's, which has no tactics (D5, D6), with D6's four requirements (no plantMountDirs). A
+// flags, challenges, hints or tactics field added to any of these types would make the strict
+// decode accept it, or the generator write it.
 func TestSourceSchemas_AreTheADRKeys(t *testing.T) {
 	for _, c := range []struct {
 		typ  reflect.Type
@@ -193,9 +194,10 @@ func TestSourceSchemas_AreTheADRKeys(t *testing.T) {
 		{reflect.TypeOf(Edition{}), []string{",inline", "playbook"}},
 		{reflect.TypeOf(Requires{}), []string{"modules"}},
 		{reflect.TypeOf(Timebox{}), []string{"minutes", "introMinutes", "closingMinutes"}},
-		{reflect.TypeOf(Composed{}), []string{"id", "title", "challenges", "source"}},
-		{reflect.TypeOf(ComposedSource{}), []string{"kind", "modules"}},
-		{reflect.TypeOf(ComposedModule{}), []string{"id", "version", "edition"}},
+		{reflect.TypeOf(Scenario{}), []string{"id", "title", "challenges", "source", "requirements"}},
+		{reflect.TypeOf(ScenarioSource{}), []string{"kind", "modules"}},
+		{reflect.TypeOf(ScenarioModule{}), []string{"id", "version", "edition"}},
+		{reflect.TypeOf(ScenarioRequirements{}), []string{"answers", "detect", "exfil", "rules"}},
 	} {
 		var got []string
 		for i := range c.typ.NumField() {

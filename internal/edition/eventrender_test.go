@@ -475,7 +475,7 @@ func TestRenderEvent_AnE3OfTheSecondChallengeWritesNothing(t *testing.T) {
 	}
 	f.tree.Put(editiontest.ChallengesRel+"/"+second+"/falco-rule.yaml", strings.Replace(string(rule), "/opt/ctf/evidence", "/opt/ctf/evidence-two", 1))
 	f.tree.Put(editiontest.ChallengesRel+"/"+second+"/journey.yaml", strings.Replace(editiontest.Journey, "challengeId: "+editiontest.CID, "challengeId: "+second, 1))
-	f.tree.Put(editiontest.ScenarioRel, "id: fixture\ntitle: Fixture\nchallenges: ["+editiontest.Evade+", "+editiontest.CID+", "+second+"]\n")
+	f.tree.PutScenario(editiontest.ScenarioID, editiontest.Evade, editiontest.CID, second)
 	f.tree.Put(editiontest.EditionRootRel+"/"+second+"/"+edition.SpecFileName, editiontest.GoodSpec())
 	f.tree.Put(editiontest.EditionRootRel+"/"+second+"/"+edition.TemplateDirName+"/"+editiontest.TemplateName, editiontest.GoodTemplate()+"extra = {{ctf:undeclared}}\n")
 

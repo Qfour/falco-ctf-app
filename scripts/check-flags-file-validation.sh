@@ -167,6 +167,9 @@ expect_validate accept "scenario tutorial-intro: only its own evade flag" '' "${
 expect_validate accept "scenario tutorial-intro: full event file reused" '' "${FULL}" "${CHALLENGES}" scenario:tutorial-intro "${SCENARIOS}"
 expect_validate reject "scenario tutorial-intro: its evade flag missing" '03-stealth-read: no flag supplied' "${NO03}" "${CHALLENGES}" scenario:tutorial-intro "${SCENARIOS}"
 expect_validate reject "scenario tutorial-intro: out-of-scope entry equals default" '10-final-exfil: value is the same as a repository default' "${OUTSCOPE_DEFAULT10}" "${CHALLENGES}" scenario:tutorial-intro "${SCENARIOS}"
+# onboarding (ADR-0055 S2b-2) holds no evade challenge: no flag is required, and the full
+# event file's entries are out of scope (checked, not applied).
+expect_validate accept "scenario onboarding: no evade challenge, nothing required (full event file)" '' "${FULL}" "${CHALLENGES}" scenario:onboarding "${SCENARIOS}"
 
 expect_validate accept "single evade challenge: its own flag only" '' "${ONLY03}" "${CHALLENGES}" 03-stealth-read
 expect_validate accept "single evade challenge: full event file reused" '' "${FULL}" "${CHALLENGES}" 03-stealth-read
@@ -226,6 +229,8 @@ expect_stdout "single evade challenge, full event file: stdout is its one pair o
   "${FULL}" "${CHALLENGES}" 05-silent-search
 expect_stdout "single trigger challenge, full event file: stdout is empty" "" \
   "${FULL}" "${CHALLENGES}" 01-initial-recon
+expect_stdout "scenario onboarding, full event file: stdout is empty" "" \
+  "${FULL}" "${CHALLENGES}" scenario:onboarding "${SCENARIOS}"
 
 echo "==> P. shared parity cases (internal/catalog/testdata/flags-parity)"
 PARITY="${REPO_ROOT}/internal/catalog/testdata/flags-parity"

@@ -17,7 +17,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -209,23 +208,13 @@ func TestDiffEvadePins_NegativeCases(t *testing.T) {
 	}
 }
 
-// writeGuardScenario writes <root>/<name>/scenario.yaml with the given ordered
-// challenges. Fixtures stay under t.TempDir(); the real scenarios/ tree is
-// never touched.
-func writeGuardScenario(t *testing.T, root, name string, challenges ...string) {
+// writeGuardScenario writes <root>/<name>/ with the given ordered challenges of chalDir
+// (catalog.WriteScenarioFor: a module.yaml and its scenario.yaml, with the requirements the
+// scope derives, which LoadScored compares). Fixtures stay under t.TempDir(); the real
+// scenarios/ tree is never touched.
+func writeGuardScenario(t *testing.T, chalDir, root, name string, challenges ...string) {
 	t.Helper()
-	dir := filepath.Join(root, name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "id: %s\ntitle: %s\nchallenges:\n", name, name)
-	for _, c := range challenges {
-		fmt.Fprintf(&b, "  - %s\n", c)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "scenario.yaml"), []byte(b.String()), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	catalog.WriteScenarioFor(t, root, chalDir, name, challenges...)
 }
 
 // End to end on a synthetic tree, through the same calls the real test makes
@@ -238,8 +227,8 @@ func TestEvadePins_EveryScenarioInTheTreeIsChecked(t *testing.T) {
 	writeChallenge(t, chalDir, "01-recon", "challengeId: \"01-recon\"\ntype: trigger\nexpectedRules:\n  - \"r1\"\n")
 	writeChallenge(t, chalDir, "02-evade", "challengeId: \"02-evade\"\ntype: evade\nforbiddenRules:\n  - \"r1\"\nexpectedFlag: \"FALCO{dev-02}\"\n")
 	scnDir := filepath.Join(dir, "scenarios")
-	writeGuardScenario(t, scnDir, "alpha", "02-evade", "01-recon") // evade first: no shared fire
-	writeGuardScenario(t, scnDir, "beta", "01-recon", "02-evade")  // trigger first: shares r1
+	writeGuardScenario(t, chalDir, scnDir, "alpha", "02-evade", "01-recon") // evade first: no shared fire
+	writeGuardScenario(t, chalDir, scnDir, "beta", "01-recon", "02-evade")  // trigger first: shares r1
 
 	cat, err := catalog.Load(chalDir)
 	if err != nil {
@@ -394,7 +383,7 @@ func TestV39_PlacementRule_EachFailureModeIsRedAndEachControlIsGreen(t *testing.
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			name := fmt.Sprintf("case-%d", i)
-			writeGuardScenario(t, scnDir, name, tc.order...)
+			writeGuardScenario(t, chalDir, scnDir, name, tc.order...)
 			late, err := evadesAfterInvestigate(cat, tc.order)
 			if err != nil {
 				t.Fatal(err)

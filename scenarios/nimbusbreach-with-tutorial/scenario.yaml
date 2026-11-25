@@ -21,3 +21,18 @@ source:
       version: 1
     - id: nimbusbreach-full
       version: 1
+requirements:
+  answers: []
+  detect: false
+  exfil: true
+  rules:
+    - Contact K8S API Server From Container
+    - Create Hardlink Over Sensitive Files
+    - Drop and execute new binary in container
+    - Execution from /dev/shm
+    - Nimbus Vault Master Key Read
+    - Read sensitive file untrusted
+    - Redirect STDOUT/STDIN to Network Connection in Container
+    - Run shell untrusted
+    - Search Private Keys or Passwords
+    - Shell Redirected Private Key Read

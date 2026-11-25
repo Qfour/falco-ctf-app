@@ -1,12 +1,14 @@
 # ADR-0055: シナリオをモジュールにし、コースで組み立てる — `scenarios/<id>/scenario.yaml` は module.yaml / course.yaml から生成する物にし、組み合わせの正しさを生成時 (CI) と起動時に機械が確かめる
 
-- Status: **Proposed** (起草 2026-11-16)
-  - Accepted の条件: (1) S2 の app PR (S2a・S2b・S2c の全部) が merge されている、(2) V4・V5 が required check の上で緑、(3) CTO の承認の記録 (private) がある。
+- Status: **Accepted** (2026-11-25。起草 2026-11-16)
+  - Accepted の条件 (すべて満たした): (1) S2 の app PR = S2a #687・S2b-1 #689・S2b-2 #690・S2c #692 が merge された (app main 815e4d1)。(2) V4 (`internal/catalog/module_test.go`・`scenario_test.go`) と V5 (`cmd/gen-scenarios/realtree_test.go`) は `go test ./...` = required の `test` で走り、#692 の merge の時に緑。(3) CTO の承認の記録 (private、ws#117 2026-11-25)。
   - S1 は本 ADR の Accepted を待たない。S1 は今の仕組みの穴を塞ぐだけで、構造を変えないため。
 - Date / Deciders: 2026-11-16 / CEO (案 B と 3 層の用語を 2026-11-16 に決定)、CTO (契約表の行)、architect (起草)、security-engineer (S3 の C4、生成器・assert の変更、detect の有効化。いずれも R1)
 - 関連: product brief ws#185 (`docs/briefs/ir-scenario.md` §5・§6)、architect の設計提案 (2026-11-16)、REFACTORING.md P27 (P27-1 / P27-2) と新フェーズ (番号は CoS が決める)、ADR-0007 / 0014 / 0026 / 0027 / 0030 / 0033、ADR-0056 (Proposed。調査型の課題と、痕跡束・答え表の注入。C4 (ii)・配置の規則・`requirements.answers` で本 ADR と接する = 0056 D17・D18)
 
 ## Context
+
+(Context は起草の時点 = app 7bd5964 の事実で、行番号もその版のもの。S1・S2 の後の姿は D2・D5・D11 に書く)
 
 ### C1 scenario が持つもの
 - 持つのは `id` / `title` / 順序付きの `challenges` だけ (`internal/catalog/scenario.go:13-17`)。
@@ -106,7 +108,7 @@
 - `scenarios/<id>/` の dir 1 つは、次のどちらか 1 つを持つ。
   - `module.yaml`: そのモジュールと、モジュール単体のコース (solo course)。
   - `course.yaml`: 複数のモジュールを組んだコース。
-- 両方ある dir、どちらも無い dir (S2 の後) は fail。
+- 両方ある dir、どちらも無い dir は fail (S2c で実装 = `catalog.LoadSource`)。source も生成物も regular file に限り、symlink は拒否する。`scenarios/` の直下の symlink の dir は生成器が拒否する。
 - module id と course id は同じ名前空間 (= dir 名) を使う。文法は `internal/catalog/testdata/scenario-name-cases.tsv`。
 - `modules/` の top-level dir は作らない。
 
@@ -125,6 +127,7 @@
 
 - 既存の `playbook-2h.md` は `nimbusbreach-full` の edition `2h` の playbook になる。
 - **edition は時間と台本だけを変える。課題の範囲は変えない** (範囲が変わる版が要るなら Signpost)。
+- edition の名前の文法は scenario の名前と同じ (`catalog.ValidScenarioName` = `dnsname.Label` で 54 文字以下)。S2a の review で本 ADR に定義が無いと分かり、scenario の名前の文法を借りた。`playbook` は module の dir の中の file 名 (`/`・`\` を含まず、`.`・`..` でない)。`duration` は handsOnMinutes が 1 以上、debriefMinutes が 0 以上。`requires.modules` に自分自身は書けない。
 
 ### D4 course.yaml (strict decode)
 
@@ -139,7 +142,7 @@
 - コースは flags・課題・ヒントを持たない。持たせようとすると strict decode が拒否する (= C6)。
 
 ### D5 `scenario.yaml` は生成物。golden test で固定する
-- 生成器は Go で書く。runtime と同じ parser を使い、正は 1 つにする (ADR-0033 D4 と同じ考え方)。make target は `gen-scenarios` と `gen-scenarios --check`。
+- 生成器は Go で書く。runtime と同じ parser を使い、正は 1 つにする (ADR-0033 D4 と同じ考え方)。make target は `gen-scenarios` と `check-gen-scenarios` (= `gen-scenarios --check`)。どちらも `Dockerfile.gen-scenarios` の中で走り、host の Go を使わない。
 - **gen-values より前に走る** (gen-values は生成物の `scenarios/*/scenario.yaml` を読む)。
 - 出力の形:
 
@@ -152,19 +155,24 @@
     requirements: {...}    # S3a から (D6、契約表の (b))
 
 - `challenges` は block の列で出す (1 行に `  - <id>`、行末の comment なし、flow の `[...]` は使わない)。shell / awk で読む消費者 (gen-values・`validate-flags-file.sh`・`assert-flag-isolation.sh`・`deploy-user.sh`) が今の形のまま読めるようにするため。header の comment 行は `challenges:` で始めない。
-- S2 で `LoadScenario` を strict decode にする。上の key だけを受け付ける (`requirements` は S3a から)。
-- S2 の後に module.yaml も course.yaml も無い dir の手書きの scenario.yaml は fail にする。
-- **golden の内容**: 移行の前後で、3 つの既存 scenario の `id` / `challenges` が完全に一致する。一致の対象は、移行前の一覧を test の中に literal で pin したもの。`tactics` は導出に変わる。差分が出れば、移行 PR の diff として review する (隠さない)。
+- S2c で `LoadScenario` を strict decode にした (`catalog.DecodeScenario`。生成器の読み戻しと同じ 1 つの型 `catalog.Scenario` と、同じ decoder)。
+  - 受ける key は `id`・`title`・`challenges`・`source` だけ (`requirements` は S3a から)。重複した key、anchor / alias / merge key、2 つ以上の文書も拒否する。
+  - file の名前が `scenario.yaml` でないもの、symlink、`id` が dir 名と違うもの、`source.kind` が dir の定義の種類と違うものも拒否する。
+- Go の loader は YAML として読むので、flow の形 (`[...]`) の `challenges` も受ける。block の形を守るのは生成器と、`go test ./...` で走る `--check` (commit した file が生成物と byte で一致すること) である。
+- 起動時に定義から生成し直して比べることはしない。コースの合成には `scenarios/` の全モジュールが要り、比べるのは CI の `--check` の役目にした。生成物の header の有無も見ない。生成物かどうかは、dir に定義があることで決まる。(この 2 点は S2c で engineer が仮に決め、review で追認した)
+- module.yaml も course.yaml も無い dir の手書きの scenario.yaml は fail にする (S2c)。起動時と、生成器の生成・`--check` の両方で fail する。生成器に `--allow-no-source` は無い。
+- **golden の内容**: 移行の前後で、3 つの既存 scenario の `id` / `challenges` が完全に一致する。一致の対象は、移行前の一覧を test の中に literal で pin したもの (`cmd/gen-scenarios/realtree_test.go`: id・title・`LoadScored` の順序・scope の digest)。`tactics` は生成物から消える (D6)。差分が出れば、移行 PR の diff として review する (隠さない)。
 - **参加者と platform から見て変わらないこと** (golden の外で確かめる): gen-values の生成物 (`challenges/values-all.yaml`・既存 3 本の `challenges/values-scenario-<name>.yaml`・各課題の `values.yaml`) が移行前と byte で一致する (差分は `values-scenario-onboarding.yaml` の追加だけ)。3 つの scope の digest (ADR-0056 B12 の `ScopeDigest`) が、移行前に手で計算して literal で pin した値と一致する。`narrative.yaml`・`debrief.md`・`playbook-2h.md` に差分が無い。
 
 ### D6 宣言させず導出するもの (宣言の写しは drift するため)
-- `tactics` は生成物に出さない。課題からの導出は `gen-attack-layer.py` の 1 つだけにする (Go に 2 つ目の導出を作ると、Go と Python の parity が新しい drift 源になる)。宣言が無くなるので、宣言との照合の warn と、`attack-coverage.md` の「宣言 tactics」の節は消える。
+- `tactics` は生成物に出さない。課題からの導出は `gen-attack-layer.py` の 1 つだけにする (Go に 2 つ目の導出を作ると、Go と Python の parity が新しい drift 源になる)。宣言が無くなるので、宣言との照合の warn と、`attack-coverage.md` の「宣言 tactics」の節は消えた (S2b-2 #690 と S2c #692 で、`gen-attack-layer.py` から宣言を読む経路ごと消した)。
 - `requirements` は次を導出する。
   - `detect`: スコープに `type: detect` があるか。
   - `exfil`: スコープに exfil を採点に使う課題があるか。
   - `rules`: スコープの課題の `expectedRules ∪ forbiddenRules` の rule 名の集合。app は default ruleset と customRules の区別を持たない。名前が解決できるかの照合は platform が行う。
-  - `plantMountDirs`。
   - `answers`: スコープの調査型の課題 id の、並べ替えた集合 (ADR-0056 D17)。A1b (#607) は merge 済みなので、S3a で最初から出す。ADR-0056 の P1b-1b (platform の render gate) がこれを読む。P1b-1b は、調査型の課題を main に置く A7 の前提である。
+- **(2026-11-25 追補、決定 = CTO) `plantMountDirs` を `requirements` の項目から外した。** 元の記述 = 上の一覧の `rules` と `answers` の間にあった 1 項目 `` - `plantMountDirs`。 `` (説明の文は無かった)。理由 = 今の code では課題の catalog から導出できず (`plant.sh` の header からしか分からない)、読み手が居ない。要る場合は Signpost 5。
+- **形と検査 (S3a で決めた細部)**: 4 つの key を `answers`・`detect`・`exfil`・`rules` の順で必ず書く。一覧は byte 順に並べ、同じ値を 2 回書かない。空の一覧は `[]` の 1 行、空でなければ block の列 (1 行に `    - <値>`。YAML の plain で読めない値だけ double-quote)。`exfil` は `requireExfil: true` の課題が scope にあるか (型を問わない)。導出の関数は 1 つ (`catalog.DeriveRequirements`) で、生成器 (`Compose` / `ComposeSolo`、したがって `--check`) と起動 (`catalog.LoadScored`) が呼ぶ。起動は、scope に Restrict した catalog から導出し直し、file の値と違えば起動しない。scope の catalog だけで導出できるので、D5 の「起動時に定義から生成し直さない」(コースの合成には全モジュールが要る) とは別の検査である。strict decode は、`requirements` の欠落、4 つの key の欠落と null、未知の key・重複・型の違い、並びの乱れと重複、scenario の `challenges` に無い `answers` を拒否する (古い image は `requirements` を未知の key として拒否する = image と app の checkout は同じ SHA)。
 - Lv の母数 (= `challenges` の数) と、合計時間 (D7 の C2 の左辺)。
 - solo course: module.yaml を持つ dir は、それ自体がモジュール単体のコースになる。生成器が `scenario.yaml` を出すので、course.yaml を宣言させない。
 
@@ -194,6 +202,7 @@
 - `narrative.yaml`、`debrief.md`、`playbook-2h.md`、`attack-coverage.md` は今の場所のまま。
 - platform の `scoreboardScenario: "nimbusbreach-with-tutorial"` は値・path とも変わらない。
 - `onboarding` を足すと、生成される scenario が 1 つ増える (`scenarios/onboarding/scenario.yaml`・`challenges/values-scenario-onboarding.yaml`・I11 の pin の行)。名前が 1 つ増えるだけで、既存の名前と path は変わらない。
+- モジュールの文は、採点に入るかどうかを書かない (例: `onboarding` の文から「採点に影響しない」を外した)。採点に入るかはコースが決める。モジュールは、自分がどのコースに入るかを知らない (C8 と同じ考え方)。
 - 新しい課題の id の採番 (ADR-0056 V45 の帰結): scenario の無い順序 (課題 id の順) でも、調査型より大きい id の evade は置けない。この規則は課題のプール全体にかかる。調査型の課題は大きい番号の帯から採り (推奨 50 以上)、その下を evade・trigger・detect に残す。
 
 ### D10 overlay は 3 層 (S4)
@@ -208,9 +217,9 @@
 
 | 段階 | 内容 | Verification |
 |---|---|---|
-| **S1 (済み = app#604・platform#331。V1 の残り = id と dir 名の一致、gen-values での重複の拒否)** | app: I11 の交差 test を全 `scenarios/*` に (C5)、scenario の id と、scenario の中の課題 id の重複を拒否 (C1 の一部)、契約表 (a) の行。platform: 導出の fail-closed (C3 を塞ぐ)。範囲の正は各 PR の本文。本 ADR は V1-V3 の性質だけを求める | V1・V2・V3 |
-| S2 | S2a = parser と合成 (`shared` を含む C1、C6)。S2b = 生成器と移行 (module.yaml ×3・course.yaml ×1・golden)。S2c = `LoadScenario` を strict に、source の無い dir を拒否 | V4・V5 |
-| S3a | 生成物の `requirements:` (D6 の全項目)、C7 の起動時の拒否、契約表 (b) の行 (両リポ同時。platform の対 = ADR-0056 P1b-1b と V8 の verify) | V7・V8 |
+| **S1 (済み = app#604・platform#331・#688 (V1 の残り = id と dir 名の一致、gen-values での重複の拒否))** | app: I11 の交差 test を全 `scenarios/*` に (C5)、scenario の id と、scenario の中の課題 id の重複を拒否 (C1 の一部)、契約表 (a) の行。platform: 導出の fail-closed (C3 を塞ぐ)。範囲の正は各 PR の本文。本 ADR は V1-V3 の性質だけを求める | V1・V2・V3 |
+| **S2 (済み = S2a #687・S2b-1 #689・S2b-2 #690・S2c #692)** | S2a = parser と合成 (`shared` を含む C1、C6)。S2b = 生成器と移行 (module.yaml ×3・course.yaml ×1・golden)。S2c = `LoadScenario` を strict に、source の無い dir を拒否 | V4・V5 |
+| S3a (実装中。app の最初の PR は `requirements:` の生成と起動時の照合まで。C7 の `DETECT_RUNNER` の起動時の拒否 (V7) は後続の app の PR。済みにするのは両方と platform の対が入ってから) | 生成物の `requirements:` (D6 の 4 項目 = answers・detect・exfil・rules)、C7 の起動時の拒否、契約表 (b) の行 (両リポ同時。platform の対 = ADR-0056 P1b-1b と V8 の verify) | V7・V8 |
 | S3b | C2・C3 (C4 (ii) は ADR-0056 A5a-1 で済み) | V6 |
 | S4 | overlay の 3 層 (D10)、C8 | V9 |
 | S5 | solo course が全モジュールにあることの CI の規則、local / 常設の runbook (COO) | V10 |
@@ -250,6 +259,8 @@
 2. 同じ Pod に同居できないモジュールの組がコースに要る (同じ file、別の NetworkPolicy、同名 rule の別条件)。1 seat に複数 Pod を置く設計に進む。
 3. 1 cluster で 2 つ以上のコースを同時に常設したい (研修の複数 cohort など)。store の次元と I1 の再訪。
 4. app の外 (非公開・第三者) でモジュールを書く要求が持続する (I6 と公開境界の再訪。ADR-0056 の秘匿の S3 案が要ると判定された場合を含む)。
+5. platform が、コースの plant の mount dir を読む必要が出る (D6 で外した `plantMountDirs`)。先に mount dir を課題の catalog から導出できるようにし (今は `plant.sh` の header だけが持つ)、そのあと `requirements` に足す (契約表の (b) の行と両リポ同時)。
+6. scenario が空 (全課題) のとき、platform は課題の定義 (`falco-rule.yaml` の `type:`) を自分で読む = `requirements` の導出が 2 本目になる (契約表の (b) の行)。catalog の型の解釈が変わる、または全課題のときにも platform が `rules` / `detect` を要るようになったら、app が全課題の `requirements` も生成物として出す形に寄せる。それまでは、platform の対の PR で、app の導出 (全 catalog) の `answers` と platform の読み取りを、`APP_PIN` の版で照らす test を持つ。
 
 ## Verification
 - **V1 (S1)**: scenario の中で課題 id が重複すると、`LoadScenario` と `gen-values --check` の両方が非ゼロになる。id と dir 名の不一致、全 scenario での id の重複も同じ。testdata の負の case を恒久 test にする。
@@ -267,4 +278,5 @@
 - CEO (2026-11-16): 案 B と 3 層の用語、次回は新シナリオ、利用形態の順、capture の録画の決定を 2 課題分だけ開き直す (detect の有効化は R1 が前提)。秘匿は architect と security-engineer が検討する (ADR-0056)。
 - product-engineer (brief ws#185 §6、2026-11-16): 利用者の要件 (C8)。「同じ課題は 1 回だけ出す」から、`shared:` の明示を導いた。
 - architect (設計提案 2026-11-16): B を推奨。今回 C4 を事実で訂正し、置き場を B2 に詰めた (C9 の境界を動かさないため)。
-- security-engineer: 未受領。S3 の C4 と生成器、detect の有効化で R1 を受ける。
+- security-engineer: S1 の残りと、S2 の生成器・loader の PR で R1 を受けた (#688・#689・#690・#692。判定と条件は private = ws#117)。S3a の C7 と detect の有効化で、また R1 を受ける。
+- review (S2a #687・S2c #692): edition の名前の文法が ADR に無い → D3。header を見ない・起動時に生成し直さない (engineer の仮決め) → D5 で追認。symlink と file 名の拒否 → D2・D5。

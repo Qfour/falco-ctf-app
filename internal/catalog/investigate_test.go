@@ -298,10 +298,7 @@ func TestLoadScored_AcceptsAnInvestigateChallengeInScope(t *testing.T) {
 	}
 
 	// a scenario that lists it
-	sc := filepath.Join(t.TempDir(), "scenario.yaml")
-	if err := os.WriteFile(sc, []byte("id: ir\ntitle: IR\nchallenges: [01-a, 14-ir-demo]\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	sc := catalog.WriteScenarioFor(t, t.TempDir(), dir, "ir", "01-a", "14-ir-demo")
 	scored, err = catalog.LoadScored(dir, sc, "")
 	if err != nil {
 		t.Fatalf("a scenario with the investigate challenge must load: %v", err)
@@ -325,10 +322,7 @@ func TestLoadScored_AcceptsAnInvestigateChallengeInScope(t *testing.T) {
 	}
 
 	// out of scope: a scenario that does not list it is fine, as before
-	sc = filepath.Join(t.TempDir(), "scenario.yaml")
-	if err := os.WriteFile(sc, []byte("id: only-a\ntitle: Only A\nchallenges: [01-a]\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	sc = catalog.WriteScenarioFor(t, t.TempDir(), dir, "only-a", "01-a")
 	scored, err = catalog.LoadScored(dir, sc, "")
 	if err != nil {
 		t.Fatalf("a scenario without the investigate challenge must load: %v", err)

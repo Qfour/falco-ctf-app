@@ -18,7 +18,8 @@
 // It imports internal/edition for the two names of an edition's layout (SpecFileName and
 // TemplateDirName: the layout has one definition, practicelayout.go) and nothing else of it, so
 // package edition's own (internal) tests cannot import it; the external test package
-// (edition_test) and cmd/scoreboard's tests can.
+// (edition_test) and cmd/scoreboard's tests can. It imports internal/catalog for the
+// requirements block of the scenario it writes (catalog.DeriveRequirements, ADR-0055 S3a).
 //
 // Every value here is a placeholder with no meaning: no real flag, no real key, no real seat.
 package editiontest
@@ -32,6 +33,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/catalog/catalogtest"
 	"github.com/Qfour/falco-ctf-app/internal/edition"
 )
 
@@ -62,8 +65,11 @@ const (
 	// ChallengesRel is the image's challenges tree.
 	ChallengesRel = "challenges"
 
-	// ScenarioRel is the scenario file.
-	ScenarioRel = "scenario/scenario.yaml"
+	// ScenarioID is the fixture's scenario: the name of its directory (ADR-0055 D2).
+	ScenarioID = "scenario"
+
+	// ScenarioRel is the scenario file (PutScenario writes it and its module.yaml).
+	ScenarioRel = ScenarioID + "/scenario.yaml"
 
 	// FlagsRel is the flags file.
 	FlagsRel = "flags/flags.yaml"
@@ -238,6 +244,37 @@ func (tr *Tree) Put(rel, content string) {
 	}
 }
 
+// PutScenario writes the scenario id of the challenges, in that order, at the root of the tree
+// (id/scenario.yaml and the module.yaml it is generated from: catalog.LoadScenario takes
+// nothing else, ADR-0055 S2c) and returns the scenario file's path. Its requirements block is
+// the one the tree's challenges derive (scopeRequirements), so the challenges it lists are
+// put in the tree first (a missing one fails the test).
+func (tr *Tree) PutScenario(id string, challenges ...string) string {
+	tr.T.Helper()
+	return catalogtest.WriteScenarioWith(tr.T, tr.Root, id, tr.scopeRequirements(challenges), challenges...)
+}
+
+// scopeRequirements is the requirements block (ADR-0055 D6, S3a) that
+// catalog.DeriveRequirements gives for the challenges of the tree's challenges directory that
+// the scenario lists: the block the generator would write, which catalog.LoadScored compares
+// the file's with. A tree that does not load, or a challenge the tree does not hold, fails the
+// test (the fixture would otherwise write a block nothing derived). No caller needs the zero
+// block today; a test of a scenario that names a missing challenge writes its file with
+// catalogtest.WriteScenario (the zero block) explicitly.
+func (tr *Tree) scopeRequirements(challenges []string) catalogtest.Requirements {
+	tr.T.Helper()
+	cat, err := catalog.Load(tr.Path(ChallengesRel))
+	if err != nil {
+		tr.T.Fatalf("PutScenario: the tree's challenges do not load (put them before the scenario): %v", err)
+	}
+	scope, err := cat.Restrict(challenges)
+	if err != nil {
+		tr.T.Fatalf("PutScenario: %v (put the challenges in the tree before the scenario)", err)
+	}
+	r := catalog.DeriveRequirements(scope)
+	return catalogtest.Requirements{Answers: r.Answers, Detect: r.Detect, Exfil: r.Exfil, Rules: r.Rules}
+}
+
 // Read is the text of the file rel.
 func (tr *Tree) Read(rel string) string {
 	tr.T.Helper()
@@ -297,7 +334,7 @@ func (tr *Tree) PlaceInputs(in Inputs) {
 	tr.Put(ChallengesRel+"/"+Evade+"/falco-rule.yaml", EvadeRule)
 	tr.CopyTree(in.Golden, ChallengesRel+"/"+CID)
 	tr.Put(ChallengesRel+"/"+CID+"/journey.yaml", Journey)
-	tr.Put(ScenarioRel, "id: fixture\ntitle: Fixture\nchallenges: ["+Evade+", "+CID+"]\n")
+	tr.PutScenario(ScenarioID, Evade, CID)
 	tr.Put(FlagsRel, "flags:\n  "+Evade+": "+Flag+"\n")
 	tr.Put(CorpusRel+"/public.txt", "placeholder text of the image's public files\n")
 	tr.Put(EditionRootRel+"/"+CID+"/"+edition.SpecFileName, in.Spec)

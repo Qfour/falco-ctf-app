@@ -348,8 +348,7 @@ func TestEditionCheck_AnExistingDigestsOutIsExit2(t *testing.T) {
 // is printed).
 func TestEditionCheck_NoInvestigateChallengeIsExit2AndB4IsNotCalled(t *testing.T) {
 	f := newEcFix(t)
-	f.put("scenario/evade-only.yaml", "id: evade-only\ntitle: Evade only\nchallenges: ["+ecEvade+"]\n")
-	args := append(without(f.args(), "--scenario"), "--scenario", f.path("scenario/evade-only.yaml"))
+	args := append(without(f.args(), "--scenario"), "--scenario", f.tree.PutScenario("evade-only", ecEvade))
 	code, stdout, stderr := runEd(append([]string{"check"}, args...)...)
 	if code != exitUsage || stdout != "" || strings.Contains(stderr, "B4 overlap") {
 		t.Errorf("exit %d, stdout %q, stderr %q; want exit 2 and nothing of B4", code, stdout, stderr)

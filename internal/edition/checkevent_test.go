@@ -510,8 +510,7 @@ func TestCheckEvent_UsageErrorsAndUnreadableInputs(t *testing.T) {
 		{"the seats file has no final newline", func(f *cevFix) { f.put("seats.txt", "# falco-ctf seats v1\nseat-a") }},
 		{"the scenario does not exist", func(f *cevFix) { f.in.ScenarioFile = f.path("no-such-scenario.yaml") }},
 		{"the scenario has no investigate challenge", func(f *cevFix) {
-			f.put("scenario/evade-only.yaml", "id: evade-only\ntitle: Evade only\nchallenges: ["+cevEvade+"]\n")
-			f.in.ScenarioFile = f.path("scenario/evade-only.yaml")
+			f.in.ScenarioFile = f.tree.PutScenario("evade-only", cevEvade)
 		}},
 		{"the answers file does not exist", func(f *cevFix) { f.in.AnswersFile = f.path("no-such-answers.tsv") }},
 		{"the render record does not exist", func(f *cevFix) { f.in.RenderRecordFile = f.path("no-such-record.tsv") }},

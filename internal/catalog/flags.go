@@ -84,7 +84,8 @@ type Scored struct {
 //
 // A flags-file rejection is wrapped in ErrFlagOverrides; a placement rejection
 // (an evade challenge after an investigate challenge in the order, A3b-5 / V39) in
-// ErrEvadeAfterInvestigate.
+// ErrEvadeAfterInvestigate; a scenario whose requirements are not the ones its scope
+// derives (ADR-0055 D6) in ErrRequirementsDiffer.
 func LoadScored(challengesDir, scenarioFile, flagsFile string) (Scored, error) {
 	full, err := Load(challengesDir)
 	if err != nil {
@@ -92,9 +93,9 @@ func LoadScored(challengesDir, scenarioFile, flagsFile string) (Scored, error) {
 	}
 	out := Scored{FullCatalog: full, ChallengesDir: challengesDir}
 	var ids []string // nil = every challenge
+	var sc Scenario
 	if scenarioFile != "" {
-		sc, err := LoadScenario(scenarioFile)
-		if err != nil {
+		if sc, err = LoadScenario(scenarioFile); err != nil {
 			return Scored{}, fmt.Errorf("scenario load %q: %w", scenarioFile, err)
 		}
 		ids = sc.Challenges
@@ -102,6 +103,14 @@ func LoadScored(challengesDir, scenarioFile, flagsFile string) (Scored, error) {
 	}
 	if out.Catalog, err = full.scored(ids, flagsFile); err != nil {
 		return Scored{}, err
+	}
+	// ADR-0055 D6 (S3a): the scenario's requirements are the ones its scope derives, from the
+	// scope's catalog alone (out.Catalog; flags do not enter the derivation). The platform
+	// reads them from the same file, so a stale block must not start a scoreboard.
+	if scenarioFile != "" {
+		if err := sc.checkRequirements(out.Catalog); err != nil {
+			return Scored{}, fmt.Errorf("scenario %q: %w", scenarioFile, err)
+		}
 	}
 	if ids != nil {
 		out.Order = ids

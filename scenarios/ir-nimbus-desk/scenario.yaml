@@ -10,3 +10,10 @@ source:
   modules:
     - id: ir-nimbus-desk
       version: 1
+requirements:
+  answers:
+    - 50-nimbus-desk-triage
+    - 51-nimbus-desk-egress
+  detect: false
+  exfil: false
+  rules: []

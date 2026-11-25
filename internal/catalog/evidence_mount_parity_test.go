@@ -39,6 +39,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/catalog/catalogtest"
 )
 
 // generatedValues is the part of a generated values file this test reads. evidence and
@@ -244,9 +245,9 @@ func v53Tree(t *testing.T) (string, string) {
 	v53Write(t, filepath.Join(ch, "values-all.yaml"), v53Values([2]string{"/opt/fx/ev-a", "14-ir-demo"}, [2]string{"/opt/fx/ev-b", "15-ir-more"}))
 	v53Write(t, filepath.Join(ch, "14-ir-demo", "values.yaml"), v53Values([2]string{"/opt/fx/ev-a", "14-ir-demo"}))
 	v53Write(t, filepath.Join(ch, "15-ir-more", "values.yaml"), v53Values([2]string{"/opt/fx/ev-b", "15-ir-more"}))
-	v53Write(t, filepath.Join(sc, "one", "scenario.yaml"), "id: one\ntitle: One\nchallenges: [01-a, 14-ir-demo]\n")
+	catalogtest.WriteScenario(t, sc, "one", "01-a", "14-ir-demo")
 	v53Write(t, filepath.Join(ch, "values-scenario-one.yaml"), v53Values([2]string{"/opt/fx/ev-a", "14-ir-demo"}))
-	v53Write(t, filepath.Join(sc, "none", "scenario.yaml"), "id: none\ntitle: None\nchallenges: [01-a]\n")
+	catalogtest.WriteScenario(t, sc, "none", "01-a")
 	v53Write(t, filepath.Join(ch, "values-scenario-none.yaml"), v53Values())
 	return ch, sc
 }
@@ -343,7 +344,7 @@ func TestEvidenceMounts_ParityFailsOnOneSideChanged(t *testing.T) {
 			}
 		},
 		"scenario: now lists the second investigate challenge": func(t *testing.T, _, sc string) {
-			v53Replace(t, filepath.Join(sc, "one", "scenario.yaml"), "[01-a, 14-ir-demo]", "[01-a, 14-ir-demo, 15-ir-more]")
+			catalogtest.WriteScenario(t, sc, "one", "01-a", "14-ir-demo", "15-ir-more")
 		},
 		"one challenge: an investigate challenge's values missing": func(t *testing.T, ch, _ string) {
 			if err := os.Remove(filepath.Join(ch, "15-ir-more", "values.yaml")); err != nil {

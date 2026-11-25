@@ -1,10 +1,18 @@
 package catalog
 
+// ADR-0055 S2c (V4): the scenario.yaml loader is strict and takes a generated file only.
+// Every fixture is under t.TempDir(), built by catalogtest (the one fixture helper) and, for a
+// defect, by one edit of its text.
+
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Qfour/falco-ctf-app/internal/catalog/catalogtest"
 )
 
 func sampleCatalog() Catalog {
@@ -15,190 +23,237 @@ func sampleCatalog() Catalog {
 	}
 }
 
-func TestLoadScenario(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "scenario.yaml")
-	os.WriteFile(p, []byte("id: demo\ntitle: Demo\nchallenges:\n  - 02-b\n  - 01-a\n"), 0o600)
-	s, err := LoadScenario(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.ID != "demo" || len(s.Challenges) != 2 || s.Challenges[0] != "02-b" {
-		t.Fatalf("unexpected scenario: %+v", s)
-	}
-}
-
-func TestLoadScenario_EmptyFails(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "s.yaml")
-	os.WriteFile(p, []byte("id: x\ntitle: y\n"), 0o600)
-	if _, err := LoadScenario(p); err == nil {
-		t.Fatal("expected error for scenario with no challenges")
-	}
-}
-
-// writeScenarioDir writes <root>/<name>/scenario.yaml (the layout LoadScenarios
-// reads) and returns the file's path. Fixtures live under t.TempDir(), never in
-// the real scenarios/ tree.
-func writeScenarioDir(t *testing.T, root, name, body string) string {
+// putFile writes body at <dir>/<name> (and dir) and returns the path.
+func putFile(t *testing.T, dir, name, body string) string {
 	t.Helper()
-	dir := filepath.Join(root, name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	p := filepath.Join(dir, "scenario.yaml")
+	p := filepath.Join(dir, name)
 	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return p
 }
 
-// The same challenge twice in one scenario is refused at load: the scoreboard
-// would walk it twice (the order is the manifest's list) while the restricted
-// catalog holds it once. The control row proves the check is not simply red.
-func TestLoadScenario_DuplicateChallengeFails(t *testing.T) {
-	root := t.TempDir()
-	dup := writeScenarioDir(t, root, "dup", "id: dup\ntitle: Dup\nchallenges:\n  - 01-a\n  - 02-b\n  - 01-a\n")
-	_, err := LoadScenario(dup)
-	if err == nil {
-		t.Fatal("expected an error for a challenge listed twice")
+// edit is s with the first old replaced by repl; the test fails when old is not in s (the
+// fixture changed and the case would test nothing).
+func edit(t *testing.T, s, old, repl string) string {
+	t.Helper()
+	if !strings.Contains(s, old) {
+		t.Fatalf("the fixture has no %q: update the case", old)
 	}
-	if !strings.Contains(err.Error(), `"01-a"`) || !strings.Contains(err.Error(), "more than once") {
-		t.Fatalf("error does not name the duplicated challenge: %v", err)
-	}
-	ok := writeScenarioDir(t, root, "ok", "id: ok\ntitle: Ok\nchallenges:\n  - 01-a\n  - 02-b\n")
-	if _, err := LoadScenario(ok); err != nil {
-		t.Fatalf("control scenario with distinct challenges was rejected: %v", err)
-	}
+	return strings.Replace(s, old, repl, 1)
 }
 
-// The tactics: key is advisory (P27-3) and ignored by Go; the decode must stay
-// non-strict so a shipped manifest carrying it keeps loading.
-func TestLoadScenario_AdvisoryTacticsKeyStillLoads(t *testing.T) {
-	root := t.TempDir()
-	p := writeScenarioDir(t, root, "adv", "id: adv\ntitle: Adv\nchallenges:\n  - 01-a\ntactics:\n  - Discovery\n")
-	if _, err := LoadScenario(p); err != nil {
-		t.Fatalf("a manifest with the advisory tactics key was rejected: %v", err)
-	}
-}
-
-// Two scenario directories answering to one id are refused, naming both paths.
-func TestLoadScenarios_DuplicateIDFails(t *testing.T) {
-	root := t.TempDir()
-	writeScenarioDir(t, root, "alpha", "id: same\ntitle: A\nchallenges:\n  - 01-a\n")
-	writeScenarioDir(t, root, "beta", "id: same\ntitle: B\nchallenges:\n  - 02-b\n")
-	_, err := LoadScenarios(root)
-	if err == nil {
-		t.Fatal("expected an error for two scenarios with the same id")
-	}
-	for _, want := range []string{`"same"`, "alpha", "beta", "declared by both"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error %q does not contain %q", err, want)
-		}
-	}
-}
-
-// Control for the test above: distinct ids load, in path order.
-func TestLoadScenarios_DistinctIDsLoadInPathOrder(t *testing.T) {
-	root := t.TempDir()
-	writeScenarioDir(t, root, "beta", "id: beta\ntitle: B\nchallenges:\n  - 02-b\n")
-	writeScenarioDir(t, root, "alpha", "id: alpha\ntitle: A\nchallenges:\n  - 01-a\n")
-	got, err := LoadScenarios(root)
+func TestLoadScenario_TheGeneratedFormLoads(t *testing.T) {
+	p := catalogtest.WriteScenario(t, t.TempDir(), "demo", "02-b", "01-a")
+	s, err := LoadScenario(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].ID != "alpha" || got[1].ID != "beta" {
-		t.Fatalf("unexpected scenarios: %+v", got)
+	want := Scenario{ID: "demo", Title: "Title demo", Challenges: []string{"02-b", "01-a"},
+		Source:       ScenarioSource{Kind: KindModule, Modules: []ScenarioModule{{ID: "demo", Version: 1}}},
+		Requirements: ScenarioRequirements{Answers: []string{}, Rules: []string{}}}
+	if !reflect.DeepEqual(s, want) {
+		t.Fatalf("LoadScenario = %+v, want %+v", s, want)
 	}
 }
 
-// A manifest whose id is not the name of its directory is refused, naming both
-// (ADR-0055 V1). Each row is the only scenario of its root, so the duplicate-id
-// check cannot be what refuses it. The control row has id == directory name and
-// must load: the check is not simply red. The last row is the real shape of a
-// slip: a good sibling next to a manifest copied from it with the id left behind.
-func TestLoadScenarios_IDMustBeTheDirectoryName(t *testing.T) {
-	tests := []struct {
-		name    string
-		dirs    map[string]string // directory name -> scenario.yaml body
-		wantErr []string          // empty: must load
-	}{
-		{
-			name: "id equals the directory name loads (control)",
-			dirs: map[string]string{"alpha": "id: alpha\ntitle: A\nchallenges:\n  - 01-a\n"},
-		},
-		{
-			name:    "an id that is another name is refused, naming the id and the directory",
-			dirs:    map[string]string{"alpha": "id: beta\ntitle: A\nchallenges:\n  - 01-a\n"},
-			wantErr: []string{`"beta"`, `"alpha"`, "is not the name of its directory"},
-		},
-		{
-			name:    "an id that differs only in case is refused",
-			dirs:    map[string]string{"alpha": "id: Alpha\ntitle: A\nchallenges:\n  - 01-a\n"},
-			wantErr: []string{`"Alpha"`, `"alpha"`, "is not the name of its directory"},
-		},
-		{
-			name: "a copied manifest whose id was not changed is refused next to its good sibling",
-			dirs: map[string]string{
-				"alpha": "id: alpha\ntitle: A\nchallenges:\n  - 01-a\n",
-				"gamma": "id: alpha-copy\ntitle: G\nchallenges:\n  - 02-b\n",
-			},
-			wantErr: []string{`"alpha-copy"`, `"gamma"`, "is not the name of its directory"},
-		},
+// One defect per case, each on the generator's form of a module alone (accepted first); a
+// course's form with an edition is accepted too.
+func TestDecodeScenario_OneDefectOneCase(t *testing.T) {
+	good := catalogtest.Scenario("demo", "01-a", "02-b")
+	const mod = "    - id: demo\n      version: 1\n"
+	course := edit(t, edit(t, good, "kind: module", "kind: course"), mod, "    - id: mod-a\n      version: 2\n      edition: 2h\n    - id: mod-b\n      version: 1\n")
+	for _, ok := range []string{good, course} {
+		if _, err := DecodeScenario([]byte(ok)); err != nil {
+			t.Fatalf("the control was refused (the cases below would prove nothing): %v\n%s", err, ok)
+		}
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			for name, body := range tc.dirs {
-				writeScenarioDir(t, root, name, body)
-			}
-			got, err := LoadScenarios(root)
-			if len(tc.wantErr) == 0 {
-				if err != nil {
-					t.Fatalf("a scenario whose id is its directory name was rejected: %v", err)
-				}
-				if len(got) != len(tc.dirs) {
-					t.Fatalf("want %d scenarios, got %+v", len(tc.dirs), got)
-				}
-				return
-			}
-			if err == nil {
-				t.Fatalf("expected an error, loaded %+v", got)
-			}
-			for _, want := range tc.wantErr {
-				if !strings.Contains(err.Error(), want) {
-					t.Fatalf("error %q does not contain %q", err, want)
-				}
+	cases := []struct{ name, body, want string }{
+		{"the key tactics (D6)", good + "tactics:\n  - Discovery\n", "field tactics not found"},
+		{"the key flags (C6)", good + "flags:\n  01-a: FALCO{dev-x}\n", "field flags not found"},
+		{"the key requirements twice (S3a; its own cases: requirements_test.go)", good + "requirements: {detect: false}\n", `"requirements" already defined`},
+		{"the key hints", good + "hints: [x]\n", "field hints not found"},
+		{"an unknown key in source", edit(t, good, "  kind: module\n", "  kind: module\n  by: x\n"), "field by not found"},
+		{"an unknown key in a source module", edit(t, good, "      version: 1\n", "      version: 1\n      title: x\n"), "field title not found"},
+		{"a repeated key", good + "id: demo\n", `"id" already defined`},
+		{"an anchor", edit(t, good, "challenges:\n", "challenges: &c\n"), "is not allowed"},
+		{"a merge key", edit(t, good, "  kind: module\n", "  <<: {kind: module}\n"), "is not allowed"},
+		{"a second document", good + "---\nid: demo\n", "more than one document"},
+		{"no document", "", "no document"},
+		{"an id that is not a scenario name", edit(t, good, "id: demo\n", "id: Demo\n"), "is not a scenario name"},
+		{"an empty title", edit(t, good, "title: Title demo\n", "title: \"\"\n"), "title is empty"},
+		{"no challenges", edit(t, good, "challenges:\n  - 01-a\n  - 02-b\n", "challenges: []\n"), "no challenges listed"},
+		{"a challenge twice", edit(t, good, "  - 02-b\n", "  - 01-a\n"), `challenge "01-a" is listed more than once`},
+		{"a challenge that is not a challenge id", edit(t, good, "  - 02-b\n", "  - b\n"), `challenge "b" is not a challenge id`},
+		{"no source", edit(t, good, "source:\n  kind: module\n  modules:\n"+mod, ""), `source.kind "" is neither`},
+		{"an unknown kind", edit(t, good, "kind: module", "kind: bundle"), `source.kind "bundle" is neither`},
+		{"no source module", edit(t, good, "  modules:\n"+mod, "  modules: []\n"), "source.modules is empty"},
+		{"a source module that is not a scenario name", edit(t, good, mod, "    - id: Demo\n      version: 1\n"), "source.modules id"},
+		{"a source module of version 0", edit(t, good, "version: 1", "version: 0"), "version must be at least 1"},
+		{"a source module of an invalid edition", edit(t, course, "edition: 2h", "edition: Two_h"), "edition name"},
+		{"a source module twice", edit(t, course, "- id: mod-b", "- id: mod-a"), `source.modules id "mod-a" is listed more than once`},
+		{"kind module, of another module", edit(t, good, "- id: demo", "- id: other"), "alone, with no edition"},
+		{"kind module, of two modules", edit(t, good, mod, mod+"    - id: other\n      version: 1\n"), "alone, with no edition"},
+		{"kind module, with an edition", edit(t, good, mod, mod+"      edition: 2h\n"), "alone, with no edition"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := DecodeScenario([]byte(c.body))
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("DecodeScenario = %v, want an error containing %q\n%s", err, c.want, c.body)
 			}
 		})
 	}
 }
 
-func TestLoadScenarios_EmptyIDFails(t *testing.T) {
-	root := t.TempDir()
-	writeScenarioDir(t, root, "noid", "title: No id\nchallenges:\n  - 01-a\n")
-	if _, err := LoadScenarios(root); err == nil {
-		t.Fatal("expected an error for a scenario with no id")
+// What LoadScenario holds a file to beyond DecodeScenario, on the path the scoreboard starts
+// from (LoadScored): the file name, a regular file, id = directory name, and a source beside
+// it of the kind the file names. A file without the generator's header loads: the source
+// file is what makes a scenario generated, not a comment.
+func TestLoadScenario_OnlyAGeneratedFileOfItsDirectory(t *testing.T) {
+	const course = "id: alpha\ntitle: Course\ntimebox: {minutes: 60}\nmodules:\n  - id: mod-a\n"
+	// setup gets dir = <root>/alpha and returns the path to load; want "" is: it loads.
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, dir string) string
+		want  string
+	}{
+		{"the generated file of a module (control)", func(t *testing.T, dir string) string {
+			return catalogtest.WriteScenario(t, filepath.Dir(dir), "alpha", "01-a")
+		}, ""},
+		{"no header (it is not looked at)", func(t *testing.T, dir string) string {
+			catalogtest.WriteScenario(t, filepath.Dir(dir), "alpha", "01-a")
+			_, body, _ := strings.Cut(catalogtest.Scenario("alpha", "01-a"), "\nid: ")
+			return putFile(t, dir, ScenarioFile, "id: "+body)
+		}, ""},
+		{"a hand-written file: no source in its directory", func(t *testing.T, dir string) string {
+			return putFile(t, dir, ScenarioFile, catalogtest.Scenario("alpha", "01-a"))
+		}, "holds neither module.yaml nor course.yaml"},
+		{"both sources in its directory", func(t *testing.T, dir string) string {
+			putFile(t, dir, CourseFile, course)
+			return catalogtest.WriteScenario(t, filepath.Dir(dir), "alpha", "01-a")
+		}, "holds both"},
+		{"a source the strict parser refuses", func(t *testing.T, dir string) string {
+			p := catalogtest.WriteScenario(t, filepath.Dir(dir), "alpha", "01-a")
+			putFile(t, dir, ModuleFile, catalogtest.Module("alpha", "01-a")+"tactics: [x]\n")
+			return p
+		}, "field tactics not found"},
+		{"an id that is another name", func(t *testing.T, dir string) string {
+			putFile(t, dir, ModuleFile, catalogtest.Module("alpha", "01-a"))
+			return putFile(t, dir, ScenarioFile, catalogtest.Scenario("beta", "01-a"))
+		}, `id "beta" is not the name of its directory "alpha"`},
+		{"an id that differs only in case", func(t *testing.T, dir string) string {
+			putFile(t, dir, ModuleFile, catalogtest.Module("alpha", "01-a"))
+			return putFile(t, dir, ScenarioFile, edit(t, catalogtest.Scenario("alpha", "01-a"), "id: alpha\n", "id: Alpha\n"))
+		}, `id "Alpha" is not a scenario name`},
+		{"a file of another name", func(t *testing.T, dir string) string {
+			putFile(t, dir, ModuleFile, catalogtest.Module("alpha", "01-a"))
+			return putFile(t, dir, "other.yaml", catalogtest.Scenario("alpha", "01-a"))
+		}, `named "other.yaml", not scenario.yaml`},
+		{"a symlink", func(t *testing.T, dir string) string {
+			p := catalogtest.WriteScenario(t, filepath.Dir(dir), "alpha", "01-a")
+			if err := os.Rename(p, p+".real"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(p+".real", p); err != nil {
+				t.Fatal(err)
+			}
+			return p
+		}, "not a regular file"},
+		{"kind course beside a module.yaml", func(t *testing.T, dir string) string {
+			catalogtest.WriteScenario(t, filepath.Dir(dir), "alpha", "01-a")
+			return putFile(t, dir, ScenarioFile, edit(t, catalogtest.Scenario("alpha", "01-a"), "kind: module", "kind: course"))
+		}, `source.kind is "course", but its directory holds a module`},
+		{"kind module beside a course.yaml", func(t *testing.T, dir string) string {
+			putFile(t, dir, CourseFile, course)
+			return putFile(t, dir, ScenarioFile, catalogtest.Scenario("alpha", "01-a"))
+		}, `source.kind is "module", but its directory holds a course`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := c.setup(t, filepath.Join(t.TempDir(), "alpha"))
+			s, err := LoadScenario(p)
+			if c.want == "" {
+				if err != nil || s.ID != "alpha" || !slices.Equal(s.Challenges, []string{"01-a"}) {
+					t.Fatalf("LoadScenario = %+v, %v; want alpha [01-a]", s, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), p) {
+				t.Fatalf("LoadScenario = %+v, %v; want an error naming %s and containing %q", s, err, p, c.want)
+			}
+		})
 	}
 }
 
-// A root with no manifests (a wrong path, a moved tree) is an error, never an
-// empty "nothing to check".
-func TestLoadScenarios_NoManifestsFails(t *testing.T) {
-	if _, err := LoadScenarios(t.TempDir()); err == nil {
-		t.Fatal("expected an error for a root with no scenario.yaml")
+// The scoreboard's start (LoadScored) refuses a scenario whose id is not its directory's
+// name, and loads the same scenario in a directory of its name.
+func TestLoadScored_ScenarioIDMustBeTheDirectoryName(t *testing.T) {
+	chal := t.TempDir()
+	putFile(t, filepath.Join(chal, "01-a"), "falco-rule.yaml", "type: trigger\nexpectedRules: [r]\n")
+	root := t.TempDir()
+	good := WriteScenarioFor(t, root, chal, "alpha", "01-a")
+	if scored, err := LoadScored(chal, good, ""); err != nil || scored.ScenarioID != "alpha" {
+		t.Fatalf("LoadScored(%s) = %+v, %v; want the scenario alpha", good, scored, err)
 	}
-	if _, err := LoadScenarios(filepath.Join(t.TempDir(), "does-not-exist")); err == nil {
-		t.Fatal("expected an error for a missing root")
+	dir := filepath.Join(root, "beta")
+	putFile(t, dir, ModuleFile, catalogtest.Module("beta", "01-a"))
+	bad := putFile(t, dir, ScenarioFile, catalogtest.Scenario("alpha", "01-a"))
+	if _, err := LoadScored(chal, bad, ""); err == nil || !strings.Contains(err.Error(), `id "alpha" is not the name of its directory "beta"`) {
+		t.Fatalf("LoadScored(%s) = %v; want the id refused", bad, err)
 	}
 }
 
-// A manifest LoadScenario rejects makes the whole set fail: a broken sibling
-// must not be skipped.
-func TestLoadScenarios_PropagatesManifestError(t *testing.T) {
+// LoadScenarios loads every scenario of a root in path order, and any file LoadScenario
+// refuses fails the whole set: two directories declaring one id (each id must be its
+// directory's), a copy whose id was left behind next to its good sibling, a sibling with no
+// challenges. A root with no scenario.yaml is an error, never "nothing to check".
+func TestLoadScenarios(t *testing.T) {
 	root := t.TempDir()
-	writeScenarioDir(t, root, "good", "id: good\ntitle: G\nchallenges:\n  - 01-a\n")
-	writeScenarioDir(t, root, "empty", "id: empty\ntitle: E\n")
-	if _, err := LoadScenarios(root); err == nil {
-		t.Fatal("expected the empty sibling manifest to fail the load")
+	catalogtest.WriteScenario(t, root, "beta", "02-b")
+	catalogtest.WriteScenario(t, root, "alpha", "01-a")
+	got, err := LoadScenarios(root)
+	if err != nil || len(got) != 2 || got[0].ID != "alpha" || got[1].ID != "beta" {
+		t.Fatalf("LoadScenarios = %+v, %v; want alpha then beta", got, err)
+	}
+	cases := []struct {
+		name   string
+		mutate func(t *testing.T, root string)
+		want   string
+	}{
+		{"two directories declaring one id", func(t *testing.T, root string) {
+			putFile(t, filepath.Join(root, "beta"), ScenarioFile, catalogtest.Scenario("alpha", "02-b"))
+		}, `id "alpha" is not the name of its directory "beta"`},
+		{"a copy whose id was left behind", func(t *testing.T, root string) {
+			dir := filepath.Join(root, "gamma")
+			putFile(t, dir, ModuleFile, catalogtest.Module("gamma", "02-b"))
+			putFile(t, dir, ScenarioFile, catalogtest.Scenario("alpha-copy", "02-b"))
+		}, `id "alpha-copy" is not the name of its directory "gamma"`},
+		{"a sibling with no challenges", func(t *testing.T, root string) {
+			putFile(t, filepath.Join(root, "beta"), ScenarioFile, edit(t, catalogtest.Scenario("beta", "02-b"), "challenges:\n  - 02-b\n", ""))
+		}, "no challenges listed"},
+		{"a sibling with an empty id", func(t *testing.T, root string) {
+			putFile(t, filepath.Join(root, "beta"), ScenarioFile, edit(t, catalogtest.Scenario("beta", "02-b"), "id: beta\n", "id: \"\"\n"))
+		}, `id "" is not a scenario name`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			catalogtest.WriteScenario(t, root, "alpha", "01-a")
+			catalogtest.WriteScenario(t, root, "beta", "02-b")
+			c.mutate(t, root)
+			if got, err := LoadScenarios(root); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("LoadScenarios = %+v, %v; want an error containing %q", got, err, c.want)
+			}
+		})
+	}
+	for _, r := range []string{t.TempDir(), filepath.Join(t.TempDir(), "does-not-exist")} {
+		if _, err := LoadScenarios(r); err == nil {
+			t.Fatalf("LoadScenarios(%s): expected an error for a root with no scenario.yaml", r)
+		}
 	}
 }
 
