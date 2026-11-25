@@ -40,6 +40,7 @@ var checkEventGates = []string{
 	"CheckBundles",
 	"checkPracticeOverlap",
 	"checkSpreads",
+	"checkCrossChallenges",
 	"checkContinuity",
 }
 
@@ -151,6 +152,8 @@ func TestCheckEventRunsEveryGateBeforeItMakesTheEvent(t *testing.T) {
 	cases := []struct{ name, old, repl string }{
 		{"the continuity (B10) is not run", "\trefusals = append(refusals, checkContinuity(bundles.rows, previous, !in.NoPrevious))\n", ""},
 		{"B4 is not run", "\treport.Overlap = checkPracticeOverlap(", "\treport.Overlap = OverlapReport{}\n\t_ = checkPracticeOverlap_removed("},
+		{"B13 to B16 are not run", "\trefusals = append(refusals, checkCrossChallenges(scope, scored.Catalog, editions, bundles.bundles, table))\n", ""},
+		{"B13 to B16 are run after B10", "\trefusals = append(refusals, checkCrossChallenges(scope, scored.Catalog, editions, bundles.bundles, table))\n\trefusals = append(refusals, checkContinuity(bundles.rows, previous, !in.NoPrevious))\n", "\trefusals = append(refusals, checkContinuity(bundles.rows, previous, !in.NoPrevious))\n\trefusals = append(refusals, checkCrossChallenges(scope, scored.Catalog, editions, bundles.bundles, table))\n"},
 		{"B7 and B8 (b) are run twice", "\trefusals = append(refusals, checkSpreads(scope, editions, bundles.bundles, table))\n", "\trefusals = append(refusals, checkSpreads(scope, editions, bundles.bundles, table))\n\trefusals = append(refusals, checkSpreads(scope, editions, bundles.bundles, table))\n"},
 		{"the render record is not read", "\trecord, err := readRenderRecord(in.RenderRecordFile)\n", "\trecord, err := renderRecord{}, error(nil)\n"},
 		{"B12 is not run", "\tif record.scope != ScopeDigest(scored.Order) {\n", "\tif record.scope == \"\" {\n"},

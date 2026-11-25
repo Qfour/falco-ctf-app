@@ -190,6 +190,11 @@ func Load(dir string) (Catalog, error) {
 		}
 		out[ch.ID] = ch
 	}
+	// ADR-0056 amendment 26: what an investigate challenge's evidence declares it shares names
+	// another investigate challenge of this catalog.
+	if err := checkEvidencePartners(out); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 

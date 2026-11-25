@@ -10,6 +10,10 @@ package catalog
 //	investigate:                  # decoded strictly: an unknown key fails the load
 //	  evidence:
 //	    mountDir: /abs/dir        # where the bundle is mounted; declared as a plant-target (A5)
+//	    shares:                   # optional (amendment 26, B14): a file the same as another's
+//	      - with: <cid>           # another investigate challenge of the catalog
+//	        file: <name>          # the file of both templates (B2's grammar: edition holds it)
+//	    timeline: <cid>           # optional (B15, B16): the challenge whose timeline this shares
 //	  questions:                  # 1..8, ordered
 //	    - id: <qid>               # answerformat.IDPattern, unique in the challenge
 //	      format: <answerformat>  # the closed list (answerformat.Formats)
@@ -34,6 +38,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog/answerformat"
+	"github.com/Qfour/falco-ctf-app/internal/catalog/challengeid"
 )
 
 // TypeInvestigate is the `type:` value of the 4th challenge type. The name is
@@ -54,9 +59,28 @@ type Investigate struct {
 	Questions []Question `yaml:"questions"`
 }
 
-// Evidence declares where the evidence bundle is mounted in the challenge container.
+// Evidence declares where the evidence bundle is mounted in the challenge container, and what
+// the bundle has in common with the bundle of another investigate challenge (ADR-0056 amendment
+// 26). The declarations are public (the catalog), never in an edition (an edition is private and
+// could leave one out); internal/edition (B13 to B16) holds the templates to them.
 type Evidence struct {
 	MountDir string `yaml:"mountDir"`
+	// Shares are the files the template of this challenge has byte for byte in common with the
+	// template of another investigate challenge, with no slot mark in either (B14). A pair of
+	// files of two challenges that is the same, or nearly the same, and is not declared here (on
+	// either side) is refused by `edition check`. Empty: none.
+	Shares []EvidenceShare `yaml:"shares"`
+	// Timeline is the investigate challenge whose timeline this one shares (B15: every literal
+	// time of this template is one of that template's; B16: no literal time of either lies in an
+	// answer window of the other). Empty: none.
+	Timeline string `yaml:"timeline"`
+}
+
+// EvidenceShare is one entry of `shares`: the file File of this challenge's template is the
+// file of the same name of challenge With's template (B14).
+type EvidenceShare struct {
+	With string `yaml:"with"`
+	File string `yaml:"file"`
 }
 
 // Question is the shape of one question. The prompt is in journey.yaml
@@ -180,6 +204,72 @@ func validateMountDir(dir string) error {
 	return nil
 }
 
+// validateEvidenceDecls is the part of `shares` and `timeline` (ADR-0056 amendment 26) that one
+// challenge's file decides: every challenge id they name is in challengeid's grammar and is not
+// the challenge itself, a share names a file, and no (with, file) is declared twice. That the
+// challenge named is an investigate challenge of the catalog is checkEvidencePartners's (it needs
+// the whole catalog). That the file is in B2's grammar of a bundle's file name is held by
+// internal/edition (B14), which owns that grammar (edition.ValidFileName): this package cannot
+// import it, and a copy here would be a second definition.
+func validateEvidenceDecls(id string, ev Evidence) error {
+	partner := func(what, cid string) error {
+		switch {
+		case !challengeid.Valid(cid):
+			return fmt.Errorf("evidence.%s is outside the challenge-id grammar %s", what, challengeid.Pattern)
+		case cid == id:
+			return fmt.Errorf("evidence.%s names the challenge itself", what)
+		}
+		return nil
+	}
+	seen := make(map[EvidenceShare]struct{}, len(ev.Shares))
+	for i, s := range ev.Shares {
+		if err := partner(fmt.Sprintf("shares[%d].with", i), s.With); err != nil {
+			return err
+		}
+		if s.File == "" {
+			return fmt.Errorf("evidence.shares[%d].file must not be empty", i)
+		}
+		if _, dup := seen[s]; dup {
+			return fmt.Errorf("evidence.shares[%d] declares a (with, file) that is declared already", i)
+		}
+		seen[s] = struct{}{}
+	}
+	if ev.Timeline != "" {
+		if err := partner("timeline", ev.Timeline); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkEvidencePartners is the part of `shares` and `timeline` that needs the whole catalog (Load
+// calls it once every file is read): every challenge they name is an investigate challenge of the
+// catalog. A declaration whose partner is not in the scope of an event (LoadScored keeps the
+// declaration as it is) names a challenge that no seat plays: B13 to B16 compare the challenges of
+// one scope with each other (internal/edition), so such a declaration has nothing to compare.
+func checkEvidencePartners(cat Catalog) error {
+	for _, id := range cat.IDs() {
+		ch := cat[id]
+		if ch.Type != TypeInvestigate || ch.Investigate == nil {
+			continue
+		}
+		ev := ch.Investigate.Evidence
+		names := make([]string, 0, len(ev.Shares)+1)
+		for _, s := range ev.Shares {
+			names = append(names, s.With)
+		}
+		if ev.Timeline != "" {
+			names = append(names, ev.Timeline)
+		}
+		for _, p := range names {
+			if other, ok := cat[p]; !ok || other.Type != TypeInvestigate {
+				return fmt.Errorf("%s challenge %q: evidence names %q, which is not an investigate challenge of the catalog", TypeInvestigate, id, p)
+			}
+		}
+	}
+	return nil
+}
+
 // validateInvestigate checks an investigate challenge and fills each question's
 // Attempts. Like detect, an investigate challenge is not flag-based and not
 // live-Falco-based, so every key of those is required to be empty.
@@ -201,6 +291,9 @@ func validateInvestigate(ch *Challenge) error {
 		return fmt.Errorf("%s challenge %q: detect block must be absent", TypeInvestigate, ch.ID)
 	}
 	if err := validateMountDir(inv.Evidence.MountDir); err != nil {
+		return fmt.Errorf("%s challenge %q: %w", TypeInvestigate, ch.ID, err)
+	}
+	if err := validateEvidenceDecls(ch.ID, inv.Evidence); err != nil {
 		return fmt.Errorf("%s challenge %q: %w", TypeInvestigate, ch.ID, err)
 	}
 	if n := len(inv.Questions); n < 1 || n > MaxQuestions {
