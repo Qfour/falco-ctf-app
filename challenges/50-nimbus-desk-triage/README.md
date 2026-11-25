@@ -45,7 +45,7 @@ grep -E 'level=(fatal|error)|starting' nimbus-desk.log
 2. `api-probe` — 17:15:32 Contact K8S API Server From Container (nimbus-desk、wget、親 sh)。目録の `/home/desk/.wget-hsts` も同じ時刻
 3. `secret-read` — 17:18:44 設定、17:19:02 資格情報 (Read sensitive file untrusted、cat、親 sh)
 4. `bundle-write` — 17:21:16 (目録の mtime だけ。アラートなし、container の log にも対応する行なし)
-5. `egress-fail` — 17:23:40〜17:24:11 egress gateway の deny (宛先は文書用の範囲の address と `.example` の名前)
+5. `egress-fail` — 17:23:40〜17:24:11 egress gateway の deny (宛先は文書用の範囲の address。接続の時点で拒否したので host 名は記録に無い = `dst_name=-`。host 名は調査 B = 51 の設問で、この束からは導けない)
 6. `app-restart` — 17:31:09 fatal と desk-init の再起動 (17:31:10〜11 に desk-migrate の確認)、17:31:12 starting (process-list の STARTED も同じ)
 
 ## `time.base` を動かさない (イベント版を作るときも)

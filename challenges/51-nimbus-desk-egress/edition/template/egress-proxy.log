@@ -1,0 +1,15 @@
+2026-10-21T16:11:21Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host=help.customer-a.example port=443 status=200 bytes_out=14102 rule=preview-fetch
+2026-10-21T16:23:06Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host=status.customer-b.example port=443 status=200 bytes_out=6230 rule=preview-fetch
+2026-10-21T16:47:42Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host=portal.customer-c.example port=443 status=403 bytes_out=0 rule=category-blocked
+2026-10-21T16:57:03Z client=198.51.100.64 pod=web-docs/docs-portal-58c7d-r2t6m method=CONNECT host=docs.customer-d.example port=443 status=200 bytes_out=88410 rule=docs-crawl
+2026-10-21T17:00:48Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host={{ctf:dest-d1}} port=443 status=200 bytes_out=18233 rule=preview-fetch
+2026-10-21T17:03:32Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host={{ctf:dest-d2}} port=443 status=200 bytes_out=9120 rule=preview-fetch
+2026-10-21T17:05:10Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host={{ctf:dest-d3}} port=443 status=403 bytes_out=0 rule=category-blocked
+2026-10-21T17:07:51Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host={{ctf:dest-d4}} port=443 status=200 bytes_out=27764 rule=preview-fetch
+2026-10-21T17:12:27Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host={{ctf:dest-d5}} port=443 status=200 bytes_out=5518 rule=preview-fetch
+2026-10-21T17:16:06Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host={{ctf:dest-d6}} port=443 status=200 bytes_out=31002 rule=preview-fetch
+2026-10-21T17:18:01Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host={{ctf:dest-d7}} port=443 status=403 bytes_out=0 rule=category-blocked
+2026-10-21T17:22:59Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host={{ctf:dest-d8}} port=443 status=200 bytes_out=12045 rule=preview-fetch
+2026-10-21T17:24:22Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host={{ctf:dest-d9}} port=443 status=200 bytes_out=7391 rule=preview-fetch
+2026-10-21T17:28:17Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host={{ctf:dest-d10}} port=443 status=200 bytes_out=16608 rule=preview-fetch
+2026-10-21T17:41:13Z client=198.51.100.64 pod=web-docs/docs-portal-58c7d-r2t6m method=CONNECT host=docs.customer-e.example port=443 status=200 bytes_out=40917 rule=docs-crawl

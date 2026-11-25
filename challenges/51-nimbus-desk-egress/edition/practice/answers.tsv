@@ -1,0 +1,3 @@
+# falco-ctf answers v1 run=00000000000000000000000000000000
+*	51-nimbus-desk-egress	dest-host	media-07.example
+*	51-nimbus-desk-egress	tactic-order	execution,discovery,credential-access,collection,c2-exfiltration

@@ -1,0 +1,75 @@
+# Journey content for the /journey UI. Schema: internal/catalog/journey.go.
+# Participant-facing narrative only — never influences scoring. An investigate
+# challenge's journey.yaml is decoded strictly (ADR-0056 D1, V25). The answers are never
+# here (they are rendered per edition, ADR-0056 D12): neither the prompts nor the hints carry
+# a value that answers a question.
+challengeId: 51-nimbus-desk-egress
+title: 事案調査 — nimbus-desk の送信先 (調査 B)
+tagline: 拒否された送信が、どこへ向かおうとしていたかを突き止めろ
+briefing: >-
+  架空の事案の続き。CTF Company の公開の web service「nimbus-desk」が侵入された夜、Pod の中で
+  読まれた内容は 1 つの file にまとめられ、外へ送られようとした。送信は egress の制限で拒否され、
+  拒否の記録には宛先の address しか残っていない。あなたは事案対応の担当として、保全された通信の
+  記録 (/srv/ir/evidence-b/) を調べ、送信先の host 名と、事案の各段階に当たる ATT&CK の Tactic を
+  報告する。痕跡の時刻はすべて UTC。
+steps:
+  - label: 保全の記録を読む
+    detail: |
+      /srv/ir/evidence-b/ に 5 つの file がある。最初に preservation-note.txt を読むと、各 file が
+      何の記録か、Pod の中の container の役割、web service の link preview の仕組みが分かる。
+        ls -l /srv/ir/evidence-b/
+        cat /srv/ir/evidence-b/preservation-note.txt
+      残りの file: egress-gateway.log (外向きの接続の判定) / cluster-dns.log (cluster の DNS への
+      問い合わせ) / egress-proxy.log (egress proxy の記録) / falco-alerts.jsonl (ticket に添付された
+      Falco のアラート)
+  - label: 記録の形
+    detail: |
+      どの file も 1 行 1 件で、時刻は UTC の RFC 3339 (YYYY-MM-DDThh:mm:ssZ)。
+      egress-gateway.log の key: verdict=allow / verdict=deny、proto、src_pod、src、dst、
+      dst_name、policy。cluster-dns.log の key: client、pod、query、type、rcode、answer。
+      egress-proxy.log の key: client、pod、method、host、port、status、rule。
+      falco-alerts.jsonl は 1 行 1 件の JSON で、rule・time と、output_fields の container.name・
+      proc.name・proc.pname・proc.cmdline・fd.name を持つ。
+  - label: 回答する
+    detail: |
+      ポータルの Story タブの回答欄に入れる。設問ごとに 5 回まで。形式に合わない入力は 400 に
+      なり、回数を消費しない。host 名は記録のとおりの綴り (大文字小文字を区別する)、並べる設問は
+      ラベルを , で区切り、空白を入れない。
+questions:
+  - id: dest-host
+    prompt: >-
+      nimbus-desk の Pod から、読まれた内容をまとめた file を外へ送ろうとした接続が、egress
+      gateway で拒否されている。その接続が向かおうとしていた宛先の host 名は?
+  - id: tactic-order
+    prompt: >-
+      次の 5 つの出来事 (順不同) は、nimbus-desk の事案の段階である。それぞれに当たる ATT&CK の
+      Tactic を、出来事が起きた順に並べ、ラベルを , でつなぎ、空白を入れずに答えよ。
+      出来事: 読まれた内容が 1 つの file にまとめられた / まとめた file を外へ送る接続が試みられ、
+      拒否された / web service の process の子として shell が起動した / 設定の file と資格情報の
+      file が読まれた / container の中から Kubernetes の API server への接続が試みられた。
+      ラベル: c2-exfiltration = Command and Control / Exfiltration、collection = Collection、
+      credential-access = Credential Access、discovery = Discovery、execution = Execution、
+      impact = Impact、lateral-movement = Lateral Movement、persistence = Persistence、
+      privilege-escalation = Privilege Escalation、stealth = Stealth
+hints:
+  - kind: rule
+    text: >-
+      気付き。Q5: 拒否された接続の記録には、宛先の address はあるが名前は無い (接続の時点で拒否
+      されたため)。名前は別の記録に、別の形で残っている。ただし同じ Pod は、正常な処理でも似た
+      名前を何度も引いている。Q6: 各出来事がどの Tactic に当たるかを考え、記録の時刻と、記録の
+      無い段階は前後の因果 (まとめてから送る、など) で並べる。
+  - kind: command
+    text: >-
+      概要。Q5: egress-gateway.log で nimbus-desk の Pod の verdict が deny の行の dst を確かめ、
+      cluster-dns.log で、同じ Pod の問い合わせのうち answer がその address の行を探す。web service の
+      link preview の問い合わせなら、その後に egress-proxy.log に同じ host の行がある。Q6:
+      falco-alerts.jsonl の rule と time、egress-gateway.log の拒否の時刻を書き出して並べる。
+  - kind: solution
+    text: >-
+      解答の手順 (値はイベントごとに違うので、ここには書かない)。Q5:
+      grep 'verdict=deny' egress-gateway.log | grep nimbus-desk
+      で拒否された宛先の address が 1 つに決まる。cluster-dns.log で answer がその address の行の
+      query の値が答え (egress-proxy.log にその host の行が無いことも確かめる)。Q6: shell の起動、
+      API server への接続、設定と資格情報の読み取り、内容をまとめる、送信の試み、の順に起きた。
+      それぞれに当たる Tactic のラベルを、この順に , でつなぐ。
+docsUrl: /missions/51-nimbus-desk-egress/

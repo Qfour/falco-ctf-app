@@ -1,0 +1,83 @@
+version: 1
+# No timestamp slot: every time in template/ is a literal string. They are the times of the
+# same incident as 50-nimbus-desk-triage (its practice time.base 2026-10-21T17:00:00Z) and
+# must stay equal to the literal times of 50's template: the refused connection 17:23:40,
+# 17:23:55, 17:24:11; the shell tree's alerts 17:14:07, 17:15:32, 17:18:44; the restart
+# 17:31:09. An edition that shifts 50's times shifts these by the same amount (README.md).
+fixed:
+  tactic-order: "execution,discovery,credential-access,collection,c2-exfiltration"
+slots:
+  # Q5 dest-host: the host name the shell's connection to 203.0.113.77 was meant for. It is
+  # only in cluster-dns.log (the gateway refused the connection before any name was sent).
+  # The 10 decoys are hosts of the same shape that the web service resolved from the same
+  # pod in the same half hour (its link-preview check) and then fetched through the egress
+  # proxy. 16 x 32 = 512 names.
+  - name: dest
+    role: answer
+    question: dest-host
+    decoys: 10
+    vocab:
+      - [files-03.example, files-07.example, files-11.example, files-14.example, files-18.example, files-21.example, files-25.example, files-29.example,
+         files-32.example, files-36.example, files-40.example, files-43.example, files-47.example, files-51.example, files-54.example, files-58.example,
+         files-62.example, files-65.example, files-69.example, files-73.example, files-76.example, files-80.example, files-84.example, files-87.example,
+         files-91.example, files-95.example, files-102.example, files-118.example, files-134.example, files-151.example, files-167.example, files-183.example,
+         share-03.example, share-07.example, share-11.example, share-14.example, share-18.example, share-21.example, share-25.example, share-29.example,
+         share-32.example, share-36.example, share-40.example, share-43.example, share-47.example, share-51.example, share-54.example, share-58.example,
+         share-62.example, share-65.example, share-69.example, share-73.example, share-76.example, share-80.example, share-84.example, share-87.example,
+         share-91.example, share-95.example, share-102.example, share-118.example, share-134.example, share-151.example, share-167.example, share-183.example,
+         drop-03.example, drop-07.example, drop-11.example, drop-14.example, drop-18.example, drop-21.example, drop-25.example, drop-29.example,
+         drop-32.example, drop-36.example, drop-40.example, drop-43.example, drop-47.example, drop-51.example, drop-54.example, drop-58.example,
+         drop-62.example, drop-65.example, drop-69.example, drop-73.example, drop-76.example, drop-80.example, drop-84.example, drop-87.example,
+         drop-91.example, drop-95.example, drop-102.example, drop-118.example, drop-134.example, drop-151.example, drop-167.example, drop-183.example,
+         sync-03.example, sync-07.example, sync-11.example, sync-14.example, sync-18.example, sync-21.example, sync-25.example, sync-29.example,
+         sync-32.example, sync-36.example, sync-40.example, sync-43.example, sync-47.example, sync-51.example, sync-54.example, sync-58.example,
+         sync-62.example, sync-65.example, sync-69.example, sync-73.example, sync-76.example, sync-80.example, sync-84.example, sync-87.example,
+         sync-91.example, sync-95.example, sync-102.example, sync-118.example, sync-134.example, sync-151.example, sync-167.example, sync-183.example,
+         upload-03.example, upload-07.example, upload-11.example, upload-14.example, upload-18.example, upload-21.example, upload-25.example, upload-29.example,
+         upload-32.example, upload-36.example, upload-40.example, upload-43.example, upload-47.example, upload-51.example, upload-54.example, upload-58.example,
+         upload-62.example, upload-65.example, upload-69.example, upload-73.example, upload-76.example, upload-80.example, upload-84.example, upload-87.example,
+         upload-91.example, upload-95.example, upload-102.example, upload-118.example, upload-134.example, upload-151.example, upload-167.example, upload-183.example,
+         media-03.example, media-07.example, media-11.example, media-14.example, media-18.example, media-21.example, media-25.example, media-29.example,
+         media-32.example, media-36.example, media-40.example, media-43.example, media-47.example, media-51.example, media-54.example, media-58.example,
+         media-62.example, media-65.example, media-69.example, media-73.example, media-76.example, media-80.example, media-84.example, media-87.example,
+         media-91.example, media-95.example, media-102.example, media-118.example, media-134.example, media-151.example, media-167.example, media-183.example,
+         docs-03.example, docs-07.example, docs-11.example, docs-14.example, docs-18.example, docs-21.example, docs-25.example, docs-29.example,
+         docs-32.example, docs-36.example, docs-40.example, docs-43.example, docs-47.example, docs-51.example, docs-54.example, docs-58.example,
+         docs-62.example, docs-65.example, docs-69.example, docs-73.example, docs-76.example, docs-80.example, docs-84.example, docs-87.example,
+         docs-91.example, docs-95.example, docs-102.example, docs-118.example, docs-134.example, docs-151.example, docs-167.example, docs-183.example,
+         cdn-03.example, cdn-07.example, cdn-11.example, cdn-14.example, cdn-18.example, cdn-21.example, cdn-25.example, cdn-29.example,
+         cdn-32.example, cdn-36.example, cdn-40.example, cdn-43.example, cdn-47.example, cdn-51.example, cdn-54.example, cdn-58.example,
+         cdn-62.example, cdn-65.example, cdn-69.example, cdn-73.example, cdn-76.example, cdn-80.example, cdn-84.example, cdn-87.example,
+         cdn-91.example, cdn-95.example, cdn-102.example, cdn-118.example, cdn-134.example, cdn-151.example, cdn-167.example, cdn-183.example,
+         assets-03.example, assets-07.example, assets-11.example, assets-14.example, assets-18.example, assets-21.example, assets-25.example, assets-29.example,
+         assets-32.example, assets-36.example, assets-40.example, assets-43.example, assets-47.example, assets-51.example, assets-54.example, assets-58.example,
+         assets-62.example, assets-65.example, assets-69.example, assets-73.example, assets-76.example, assets-80.example, assets-84.example, assets-87.example,
+         assets-91.example, assets-95.example, assets-102.example, assets-118.example, assets-134.example, assets-151.example, assets-167.example, assets-183.example,
+         store-03.example, store-07.example, store-11.example, store-14.example, store-18.example, store-21.example, store-25.example, store-29.example,
+         store-32.example, store-36.example, store-40.example, store-43.example, store-47.example, store-51.example, store-54.example, store-58.example,
+         store-62.example, store-65.example, store-69.example, store-73.example, store-76.example, store-80.example, store-84.example, store-87.example,
+         store-91.example, store-95.example, store-102.example, store-118.example, store-134.example, store-151.example, store-167.example, store-183.example,
+         vault-03.example, vault-07.example, vault-11.example, vault-14.example, vault-18.example, vault-21.example, vault-25.example, vault-29.example,
+         vault-32.example, vault-36.example, vault-40.example, vault-43.example, vault-47.example, vault-51.example, vault-54.example, vault-58.example,
+         vault-62.example, vault-65.example, vault-69.example, vault-73.example, vault-76.example, vault-80.example, vault-84.example, vault-87.example,
+         vault-91.example, vault-95.example, vault-102.example, vault-118.example, vault-134.example, vault-151.example, vault-167.example, vault-183.example,
+         depot-03.example, depot-07.example, depot-11.example, depot-14.example, depot-18.example, depot-21.example, depot-25.example, depot-29.example,
+         depot-32.example, depot-36.example, depot-40.example, depot-43.example, depot-47.example, depot-51.example, depot-54.example, depot-58.example,
+         depot-62.example, depot-65.example, depot-69.example, depot-73.example, depot-76.example, depot-80.example, depot-84.example, depot-87.example,
+         depot-91.example, depot-95.example, depot-102.example, depot-118.example, depot-134.example, depot-151.example, depot-167.example, depot-183.example,
+         relay-03.example, relay-07.example, relay-11.example, relay-14.example, relay-18.example, relay-21.example, relay-25.example, relay-29.example,
+         relay-32.example, relay-36.example, relay-40.example, relay-43.example, relay-47.example, relay-51.example, relay-54.example, relay-58.example,
+         relay-62.example, relay-65.example, relay-69.example, relay-73.example, relay-76.example, relay-80.example, relay-84.example, relay-87.example,
+         relay-91.example, relay-95.example, relay-102.example, relay-118.example, relay-134.example, relay-151.example, relay-167.example, relay-183.example,
+         mirror-03.example, mirror-07.example, mirror-11.example, mirror-14.example, mirror-18.example, mirror-21.example, mirror-25.example, mirror-29.example,
+         mirror-32.example, mirror-36.example, mirror-40.example, mirror-43.example, mirror-47.example, mirror-51.example, mirror-54.example, mirror-58.example,
+         mirror-62.example, mirror-65.example, mirror-69.example, mirror-73.example, mirror-76.example, mirror-80.example, mirror-84.example, mirror-87.example,
+         mirror-91.example, mirror-95.example, mirror-102.example, mirror-118.example, mirror-134.example, mirror-151.example, mirror-167.example, mirror-183.example,
+         box-03.example, box-07.example, box-11.example, box-14.example, box-18.example, box-21.example, box-25.example, box-29.example,
+         box-32.example, box-36.example, box-40.example, box-43.example, box-47.example, box-51.example, box-54.example, box-58.example,
+         box-62.example, box-65.example, box-69.example, box-73.example, box-76.example, box-80.example, box-84.example, box-87.example,
+         box-91.example, box-95.example, box-102.example, box-118.example, box-134.example, box-151.example, box-167.example, box-183.example,
+         xfer-03.example, xfer-07.example, xfer-11.example, xfer-14.example, xfer-18.example, xfer-21.example, xfer-25.example, xfer-29.example,
+         xfer-32.example, xfer-36.example, xfer-40.example, xfer-43.example, xfer-47.example, xfer-51.example, xfer-54.example, xfer-58.example,
+         xfer-62.example, xfer-65.example, xfer-69.example, xfer-73.example, xfer-76.example, xfer-80.example, xfer-84.example, xfer-87.example,
+         xfer-91.example, xfer-95.example, xfer-102.example, xfer-118.example, xfer-134.example, xfer-151.example, xfer-167.example, xfer-183.example]

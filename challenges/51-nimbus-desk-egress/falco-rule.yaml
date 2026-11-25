@@ -1,0 +1,39 @@
+challengeId: 51-nimbus-desk-egress
+# ADR-0056 D1: an investigate challenge, the second of the module ir-nimbus-desk (調査 B, for
+# the fast participants). The same incident and the same preservation time as
+# 50-nimbus-desk-triage, but its own evidence bundle and its own mountDir: two challenges
+# may not share or nest a mount directory (D1 (b)), and the bundle is per (seat, challenge)
+# (D11, the Secret ctf-evidence-<cid>). The bundle carries no value that is a per-seat
+# answer of 50, and 50's bundle carries none of this one (D1 (ii)).
+#
+# Only the SHAPE of the questions is here; the answers are rendered into edition/practice/
+# by `make edition-practice CID=51-nimbus-desk-egress` (practice) or on the platform side.
+# The id is in the 50+ band (ADR-0056 V39 / V45).
+type: investigate
+investigate:
+  evidence:
+    mountDir: /srv/ir/evidence-b
+  questions:
+    # Q5 (per seat): the host name the refused connection was meant for.
+    - id: dest-host
+      format: name
+      attempts: 5
+    # Q6 (fixed): the Tactics of the five stages, in the order the stages happened. 5 of 10
+    # labels: 10!/5! = 30240 arrangements (D3 (a)). The labels are listed in alphabetical
+    # order, not in the answer's order. Tactic names only (no technique ids: the technique
+    # format is refused until ADR-0056 A1c).
+    - id: tactic-order
+      format: sequence
+      attempts: 5
+      params:
+        length: 5
+        labels: [c2-exfiltration, collection, credential-access, discovery, execution, impact, lateral-movement, persistence, privilege-escalation, stealth]
+# ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+# Provisional (the brief leaves the Technique ID column to the CEO; gen-attack-layer.py needs
+# one complete block). The Falco-observed behaviour in this bundle is the shell under the web
+# service process (the alerts the responder linked); the refused connection is in the network
+# records, which Falco did not alert on (ADR-0015: tag only what Falco observed).
+attack:
+  tactic: "Execution"
+  techniqueId: "T1059.004"
+  techniqueName: "Command and Scripting Interpreter: Unix Shell"

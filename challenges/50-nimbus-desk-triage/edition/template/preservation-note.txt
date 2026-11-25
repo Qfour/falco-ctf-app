@@ -14,6 +14,8 @@ files
   nimbus-desk.log      stdout and stderr of the container: the web service and its init process
                        (desk-init restarts the web service process when it exits).
   egress-gateway.log   verdicts of the egress gateway for connections that leave the cluster.
+                       dst_name is the TLS server name the gateway saw; "-" when the
+                       connection was refused before any name was sent.
   process-list.txt     processes of the container at capture time.
 
 containers of the pod

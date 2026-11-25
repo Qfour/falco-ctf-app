@@ -1,0 +1,25 @@
+# The module ir-nimbus-desk (ADR-0055 D3): the defender's side of a fictional incident at
+# CTF Company's public web service nimbus-desk. The participant reads the evidence preserved
+# from the compromised container and answers questions (investigate, ADR-0056); no attack is
+# performed. 50 is the required investigation (調査 A); 51 continues the same incident for the
+# fast participants (調査 B). Both are self-contained: neither text refers to a challenge
+# outside this module, and neither needs a state another module leaves behind. Investigate
+# challenges only, so no evade challenge comes after one (ADR-0056 V39). scenario.yaml beside
+# this file is generated from it: edit this file, then run make gen-scenarios (and make
+# gen-values).
+id: ir-nimbus-desk
+title: "事案調査 — nimbus-desk (防御側)"
+summary: >-
+  架空の事案。公開の web service が侵入された後に保全された痕跡 (Falco のアラート・file の目録・
+  container の log・外向きの通信の記録) を調べ、何が・いつ・どの順に起きたかを組み立てる。
+outcomes:
+  - Falco のアラートを rule・container・process の親子で絞り、事案の段階を 5 つ以上、起きた順に並べられる
+  - アラートに出ない段階 (内容をまとめた file、拒否された送信) を、file の目録・container の log・通信の記録から特定できる
+  - 別々の file の時刻を UTC の 1 本の時系列に統合し、紛らわしい正常な記録と区別できる
+  - 再構成した各段階に、ATT&CK の Tactic を対応づけられる
+version: 1
+level: 3
+duration: {handsOnMinutes: 40, debriefMinutes: 10}
+missions:
+  - 50-nimbus-desk-triage
+  - 51-nimbus-desk-egress
