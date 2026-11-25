@@ -187,7 +187,8 @@ func TestCheckEvent_EachCheckBrokenAloneRefusesTheEvent(t *testing.T) {
 		}, wantRules: []string{"E2"}, onlyRules: true},
 		{name: "E2: a block of a file the template does not have (amendment 28)", brk: func(f *cevFix) {
 			f.rewrite("edition-root/"+demoCID+"/"+edition.SpecFileName, func(s string) string {
-				return s + "blocks:\n  - {file: missing.txt, from: 1, to: 1}\n"
+				// blocks is the last key of the fixture's edition.yaml: the entry joins its list.
+				return s + "  - {file: missing.txt, from: 1, to: 1}\n"
 			})
 		}, wantRules: []string{"E2"}, onlyRules: true},
 		{name: "E2: a clue that is not a word of the template (amendment 28)", brk: func(f *cevFix) {
@@ -253,15 +254,7 @@ func TestCheckEvent_EachCheckBrokenAloneRefusesTheEvent(t *testing.T) {
 			f.put("challenges/"+demoCID+"/edition/template/a.txt", f.tmpl)
 		}, wantRules: []string{"B4"}, onlyRules: true, wantB4Ran: true},
 		{name: "B7: two seats hold the same token at a decoy's position", brk: func(f *cevFix) {
-			name := "evidence/seat-a/" + demoCID + "/" + cevTemplateName
-			a := strings.Split(f.read(name), "\n")
-			b := strings.Split(f.read("evidence/seat-b/"+demoCID+"/"+cevTemplateName), "\n")
-			for i, ln := range a {
-				if strings.HasPrefix(ln, "who-candidate-1 = ") {
-					b[i] = ln
-				}
-			}
-			f.put("evidence/seat-b/"+demoCID+"/"+cevTemplateName, strings.Join(b, "\n"))
+			f.copyDecoyLine()
 		}, wantRules: []string{"B7"}, wantB4Ran: true},
 		{name: "B8 (b): 4 decoys give 5 candidates, D3 (b) needs 10", opts: &cevOpts{nameWords: 100, decoys: 4}, wantRules: []string{"B8"}, wantB4Ran: true},
 		{name: "B10: a digest of the previous render differs", brk: func(f *cevFix) {
@@ -332,19 +325,31 @@ func TestCheckEvent_StepsSixToEightAreAllRun(t *testing.T) {
 	// B4: the event template is the practice template
 	f.put("challenges/"+demoCID+"/edition/template/a.txt", f.tmpl)
 	// B7: two seats hold the same token at a decoy's position
-	a := strings.Split(f.read("evidence/seat-a/"+demoCID+"/"+cevTemplateName), "\n")
-	b := strings.Split(f.read("evidence/seat-b/"+demoCID+"/"+cevTemplateName), "\n")
-	for i, ln := range a {
-		if strings.HasPrefix(ln, "who-candidate-1 = ") {
-			b[i] = ln
-		}
-	}
-	f.put("evidence/seat-b/"+demoCID+"/"+cevTemplateName, strings.Join(b, "\n"))
+	f.copyDecoyLine()
 
 	err, report := f.refused("B4, B7 and B10 together")
 	if got := cevRuleSet(err); !slices.Equal(got, []string{"B10", "B4", "B7"}) || !report.OverlapRan {
 		t.Errorf("rules %v, report %+v; want B10, B4 and B7 together and B4's numbers (err: %v)", got, report, err)
 	}
+}
+
+// copyDecoyLine puts, in seat-b's bundle, a line of the block of who's group of seat-a's bundle at
+// the same place: a line where neither seat has its answer of q1 (so B6 still holds), so the two
+// seats hold the same value in the column of the group (B7's block form (2)).
+func (f *cevFix) copyDecoyLine() {
+	f.t.Helper()
+	aName := "evidence/seat-a/" + demoCID + "/" + cevTemplateName
+	bName := "evidence/seat-b/" + demoCID + "/" + cevTemplateName
+	a, b := strings.Split(f.read(aName), "\n"), strings.Split(f.read(bName), "\n")
+	from, to := editiontest.BlockLines(editiontest.GoodDecoys, "who")
+	for i := from - 1; i < to; i++ {
+		if !strings.HasSuffix(a[i], " "+f.answers["seat-a/q1"]) && !strings.HasSuffix(b[i], " "+f.answers["seat-b/q1"]) {
+			b[i] = a[i]
+			f.put(bName, strings.Join(b, "\n"))
+			return
+		}
+	}
+	f.t.Fatal("no line of who's block holds a decoy in both seat-a's and seat-b's bundles")
 }
 
 // A mark outside the grammar in the event template is E3 (the renderer's lexer, V69), and the
@@ -354,73 +359,97 @@ func TestCheckEvent_ABadMarkInTheTemplateIsE3(t *testing.T) {
 		t.Fatalf("RuleTemplateMark = %q, RuleSpecRender = %q; they are one rule", edition.RuleTemplateMark, edition.RuleSpecRender)
 	}
 	f := newGoodCevFix(t)
-	f.rewrite("edition-root/"+demoCID+"/"+edition.TemplateDirName+"/"+cevTemplateName, func(s string) string { return s + "broken {{ctf: mark\n" })
+	// A file of its own: the fixture's template file holds the blocks, and E2 cannot read a block
+	// of a file the lexer refuses (that is E2's to name, besides E3).
+	f.put("edition-root/"+demoCID+"/"+edition.TemplateDirName+"/broken.txt", "broken {{ctf: mark\n")
 	err, report := f.refused("a mark outside the grammar")
 	if isInputErr(err) || !slices.Equal(cevRuleSet(err), []string{"E3"}) || report.OverlapRan {
 		t.Errorf("rules %v, report %+v, err %v; want E3 only, before B4", cevRuleSet(err), report, err)
 	}
 }
 
-// Amendment 28 (A7-x PR 1): an event edition that declares a block over the lines of when's
-// group and a clue of when is accepted. A7-x PR 2: the bundles are the renderer's output of that edition (the block's lines ordered by
-// their times, the group's columns apart between the seats), end to end through CheckEvent, for
-// the three seats, with the clue and without it. The same block declared after the render (the
-// bundles are the render of the edition without it, in the template's order) is refused by B7:
-// an edition changed after its render is not the edition of the bundles.
+// Amendment 28 (A7-x PR 1, PR 2) and B17 (PR 4): the good event's edition puts every group in a
+// block (B17 asks for it), so its bundles are the renderer's output of an edition with blocks (each
+// block's lines ordered by their times, the group's columns apart between the seats), accepted end
+// to end through CheckEvent. The blocks declared after the render (the bundles are the render of
+// the edition without them, in the template's order) are refused by B7 alone: an edition changed
+// after its render is not the edition of the bundles.
 func TestCheckEvent_AcceptsBlocksAndClues(t *testing.T) {
-	from, to := 0, 0
-	for i, ln := range strings.Split(editiontest.TemplateText(editiontest.GoodDecoys), "\n") {
-		if strings.HasPrefix(ln, "when-") {
-			if from == 0 {
-				from = i + 1
-			}
-			to = i + 1
-		}
-	}
-	if from == 0 || to-from != editiontest.GoodDecoys {
-		t.Fatalf("the lines of when's group are %d..%d: the fixture's template changed", from, to)
-	}
-	block := func(clue bool) func(string) string {
-		return func(s string) string {
-			if clue {
-				s = strings.Replace(s, "    question: q4\n", "    question: q4\n    clues: [when-answer]\n", 1)
-			}
-			return s + fmt.Sprintf("blocks:\n  - {file: %s, from: %d, to: %d}\n", cevTemplateName, from, to)
-		}
-	}
 	specPath := "edition-root/" + demoCID + "/" + edition.SpecFileName
-	for _, clue := range []bool{true, false} {
-		t.Run(fmt.Sprintf("clue=%v", clue), func(t *testing.T) {
-			f := newCevFix(t, cevOpts{nameWords: editiontest.GoodNameWords, decoys: editiontest.GoodDecoys, specEdit: block(clue)})
-			spec := f.read(specPath)
-			if !strings.Contains(spec, "blocks:") || strings.Contains(spec, "clues: [when-answer]") != clue {
-				t.Fatal("the block or the clue was not written as asked: the test does not test")
-			}
-			// The render ordered the block in every seat (the bundles are not the template's order).
-			for _, seat := range f.seats {
-				lines := strings.Split(f.read("evidence/"+seat+"/"+demoCID+"/"+cevTemplateName), "\n")
+	t.Run("the blocks of the good event", func(t *testing.T) {
+		f := newGoodCevFix(t)
+		if !strings.Contains(f.read(specPath), "blocks:") {
+			t.Fatal("the fixture's edition.yaml declares no block: the test does not test")
+		}
+		// The render ordered every block in every seat (the bundles are not the template's order).
+		for _, seat := range f.seats {
+			lines := strings.Split(f.read("evidence/"+seat+"/"+demoCID+"/"+cevTemplateName), "\n")
+			for _, g := range editiontest.Groups {
+				from, to := editiontest.BlockLines(editiontest.GoodDecoys, g)
 				prev := ""
 				for _, ln := range lines[from-1 : to] {
-					_, v, ok := strings.Cut(ln, " = ")
-					if !ok || v <= prev {
-						t.Fatalf("seat %s: the block of the render is not in strictly ascending time", seat)
+					fields := strings.Fields(ln)
+					if len(fields) <= editiontest.TimeField || fields[editiontest.TimeField] <= prev {
+						t.Fatalf("seat %s: the block of %s of the render is not in strictly ascending time", seat, g)
 					}
-					prev = v
+					prev = fields[editiontest.TimeField]
 				}
 			}
-			if ev, _, err := f.check(); err != nil || ev == nil {
-				t.Fatalf("an edition with a block (clue %v) and the renderer's bundles was refused: %v", clue, err)
-			}
-		})
-	}
+		}
+		if ev, _, err := f.check(); err != nil || ev == nil {
+			t.Fatalf("an edition with blocks and the renderer's bundles was refused: %v", err)
+		}
+	})
 	t.Run("declared after the render", func(t *testing.T) {
-		f := newGoodCevFix(t)
-		f.rewrite(specPath, block(true))
-		err, _ := f.refused("a block declared after the render")
+		noBlocks := func(s string) string {
+			i := strings.Index(s, "blocks:\n")
+			if i < 0 {
+				t.Fatal("the fixture's edition.yaml declares no block")
+			}
+			return s[:i]
+		}
+		f := newCevFix(t, cevOpts{nameWords: editiontest.GoodNameWords, decoys: editiontest.GoodDecoys, specEdit: noBlocks})
+		f.put(specPath, editiontest.GoodSpec())
+		err, _ := f.refused("the blocks declared after the render")
 		if got := rules(err); !slices.Equal(got, []string{"B7"}) {
 			t.Errorf("rules = %v, want [B7]: %v", got, err)
 		}
 	})
+}
+
+// B17 through CheckEvent (V111 (2), the event's template): the good event's template with one
+// fixed word of a decoy's line changed, rendered and checked, is refused by B17 (and by it alone:
+// nothing else compares the lines of a group); and a group that is in no block is refused by B17.
+func TestCheckEvent_B17IsWired(t *testing.T) {
+	from, _ := editiontest.BlockLines(editiontest.GoodDecoys, "who")
+	whoBlock := fmt.Sprintf("  - {file: %s, from: %d, to: %d}\n", cevTemplateName, from, from+editiontest.GoodDecoys)
+	if !strings.Contains(editiontest.GoodSpec(), whoBlock) {
+		t.Fatal("the fixture's edition.yaml has no block of who: the test does not test")
+	}
+	cases := []struct {
+		name string
+		o    cevOpts
+	}{
+		{name: "a fixed word of a decoy's line changed", o: cevOpts{tmplEdit: func(s string) string {
+			lines := strings.Split(s, "\n")
+			lines[from] = strings.Replace(lines[from], " holds ", " keeps ", 1)
+			return strings.Join(lines, "\n")
+		}}},
+		{name: "the group of who in no block", o: cevOpts{specEdit: func(s string) string {
+			return strings.Replace(s, whoBlock, "", 1)
+		}}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			o := c.o
+			o.nameWords, o.decoys = editiontest.GoodNameWords, editiontest.GoodDecoys
+			f := newCevFix(t, o)
+			err, _ := f.refused(c.name)
+			if got := cevRuleSet(err); !slices.Equal(got, []string{edition.RuleRowSymmetry}) {
+				t.Errorf("rules %v, want [B17]: %v", got, err)
+			}
+		})
+	}
 }
 
 // V89 (A4e-2c): B5 holds the bundles to what the server shows, and the server shows the
@@ -490,19 +519,21 @@ func TestCheckEvent_TheReportIsReturnedWhenB4Refuses(t *testing.T) {
 	}
 }
 
-// V77: a space of 200 for 101 seats is B8, the same decision as the renderer's E3; for 100
-// seats it is not B8 (the seat list then fails B1, the answers table has 3 seats).
+// V77: every group of the fixture is in a block (B17), so its bound is 2 x N x (k + 1) with k = 9
+// decoys: a space of 1000 for 51 seats (1020) is B8, the same decision as the renderer's E3; for 50
+// seats (1000) it is not B8 (the seat list then fails B1, the answers table has 3 seats). where's
+// space is 1000 too.
 func TestCheckEvent_B8SeatSpaceAtTheBoundary(t *testing.T) {
-	f := newCevFix(t, cevOpts{nameWords: 200, decoys: 9})
-	f.put("seats.txt", cevSeatsText(seatsList(101)))
-	err, _ := f.refused("101 seats")
-	if got := cevRuleSet(err); !slices.Equal(got, []string{"B8"}) || !strings.Contains(err.Error(), "(101)") {
-		t.Errorf("101 seats for a space of 200: rules %v, err %v; want B8 naming 101 seats", got, err)
+	f := newCevFix(t, cevOpts{nameWords: 1000, decoys: 9})
+	f.put("seats.txt", cevSeatsText(seatsList(51)))
+	err, _ := f.refused("51 seats")
+	if got := cevRuleSet(err); !slices.Equal(got, []string{"B8"}) || !strings.Contains(err.Error(), "(51)") {
+		t.Errorf("51 seats for a space of 1000 in a block of 10: rules %v, err %v; want B8 naming 51 seats", got, err)
 	}
-	f.put("seats.txt", cevSeatsText(seatsList(100)))
-	err, _ = f.refused("100 seats")
+	f.put("seats.txt", cevSeatsText(seatsList(50)))
+	err, _ = f.refused("50 seats")
 	if got := cevRuleSet(err); slices.Contains(got, "B8") || !slices.Contains(got, "B1") {
-		t.Errorf("100 seats for a space of 200: rules %v; want B1 (the list is not the table's) and no B8", got)
+		t.Errorf("50 seats for a space of 1000 in a block of 10: rules %v; want B1 (the list is not the table's) and no B8", got)
 	}
 }
 
@@ -730,8 +761,8 @@ func TestCheckEvent_ATableRuleIsARuleNotAUsageError(t *testing.T) {
 	f := newGoodCevFix(t)
 	f.put("answers.tsv", "# falco-ctf answers v1 run="+edition.PracticeRunID+"\n")
 	err, report := f.refused("a table with the practice run id")
-	if isInputErr(err) || report.OverlapRan || len(cevRuleSet(err)) == 0 {
-		t.Errorf("err %v, report %+v; want a rule's refusal before B4", err, report)
+	if isInputErr(err) || report.OverlapRan || !slices.Contains(cevRuleSet(err), edition.RuleShape) {
+		t.Errorf("err %v, report %+v; want a rule's refusal before B4, T3 among the rules", err, report)
 	}
 }
 

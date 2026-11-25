@@ -404,10 +404,12 @@ func TestEditionCheck_ARuleOfD10IsExit1(t *testing.T) {
 				f.t.Fatal(err)
 			}
 		}, "E2:", ""},
-		// V90: a failure of the lexer of the marks in the event template is E3.
+		// V90: a failure of the lexer of the marks in the event template is E3. It is in a file of
+		// its own: the fixture's template file holds the blocks (B17), and a block of a file the lexer
+		// refuses is E2's to name too.
 		{"E3: a mark outside the grammar in the template", func(f *ecFix) {
-			f.put("edition-root/"+ecCID+"/template/"+ecTmpl, ecTemplate()+"broken {{ctf: mark\n")
-		}, "E3:", ""},
+			f.put("edition-root/"+ecCID+"/template/broken.txt", "broken {{ctf: mark\n")
+		}, "E3:", "E2:"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
