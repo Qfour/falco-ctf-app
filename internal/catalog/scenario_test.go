@@ -53,7 +53,8 @@ func TestLoadScenario_TheGeneratedFormLoads(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Scenario{ID: "demo", Title: "Title demo", Challenges: []string{"02-b", "01-a"},
-		Source: ScenarioSource{Kind: KindModule, Modules: []ScenarioModule{{ID: "demo", Version: 1}}}}
+		Source:       ScenarioSource{Kind: KindModule, Modules: []ScenarioModule{{ID: "demo", Version: 1}}},
+		Requirements: ScenarioRequirements{Answers: []string{}, Rules: []string{}}}
 	if !reflect.DeepEqual(s, want) {
 		t.Fatalf("LoadScenario = %+v, want %+v", s, want)
 	}
@@ -73,7 +74,7 @@ func TestDecodeScenario_OneDefectOneCase(t *testing.T) {
 	cases := []struct{ name, body, want string }{
 		{"the key tactics (D6)", good + "tactics:\n  - Discovery\n", "field tactics not found"},
 		{"the key flags (C6)", good + "flags:\n  01-a: FALCO{dev-x}\n", "field flags not found"},
-		{"the key requirements (S3a)", good + "requirements: {detect: false}\n", "field requirements not found"},
+		{"the key requirements twice (S3a; its own cases: requirements_test.go)", good + "requirements: {detect: false}\n", `"requirements" already defined`},
 		{"the key hints", good + "hints: [x]\n", "field hints not found"},
 		{"an unknown key in source", edit(t, good, "  kind: module\n", "  kind: module\n  by: x\n"), "field by not found"},
 		{"an unknown key in a source module", edit(t, good, "      version: 1\n", "      version: 1\n      title: x\n"), "field title not found"},
@@ -95,8 +96,8 @@ func TestDecodeScenario_OneDefectOneCase(t *testing.T) {
 		{"a source module of an invalid edition", edit(t, course, "edition: 2h", "edition: Two_h"), "edition name"},
 		{"a source module twice", edit(t, course, "- id: mod-b", "- id: mod-a"), `source.modules id "mod-a" is listed more than once`},
 		{"kind module, of another module", edit(t, good, "- id: demo", "- id: other"), "alone, with no edition"},
-		{"kind module, of two modules", good + "    - id: other\n      version: 1\n", "alone, with no edition"},
-		{"kind module, with an edition", good + "      edition: 2h\n", "alone, with no edition"},
+		{"kind module, of two modules", edit(t, good, mod, mod+"    - id: other\n      version: 1\n"), "alone, with no edition"},
+		{"kind module, with an edition", edit(t, good, mod, mod+"      edition: 2h\n"), "alone, with no edition"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -194,7 +195,7 @@ func TestLoadScored_ScenarioIDMustBeTheDirectoryName(t *testing.T) {
 	chal := t.TempDir()
 	putFile(t, filepath.Join(chal, "01-a"), "falco-rule.yaml", "type: trigger\nexpectedRules: [r]\n")
 	root := t.TempDir()
-	good := catalogtest.WriteScenario(t, root, "alpha", "01-a")
+	good := WriteScenarioFor(t, root, chal, "alpha", "01-a")
 	if scored, err := LoadScored(chal, good, ""); err != nil || scored.ScenarioID != "alpha" {
 		t.Fatalf("LoadScored(%s) = %+v, %v; want the scenario alpha", good, scored, err)
 	}

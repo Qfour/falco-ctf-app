@@ -242,22 +242,32 @@ func readRegular(path string) ([]byte, error) {
 // decodeSource is the strict decode of a module.yaml or course.yaml: exactly one
 // document, no anchor, alias or merge key, then KnownFields(true) on the bytes.
 func decodeSource(data []byte, out any) error {
+	if _, err := sourceDocument(data); err != nil {
+		return err
+	}
+	return decodeStrictBytes(data, out)
+}
+
+// sourceDocument is the node checks of decodeSource: the one document of data, with no
+// anchor, alias or merge key. DecodeScenario looks at the nodes of the requirements block
+// (requirementsShape) between it and the strict decode.
+func sourceDocument(data []byte) (*yaml.Node, error) {
 	nodes := yaml.NewDecoder(bytes.NewReader(data))
 	var doc yaml.Node
 	if err := nodes.Decode(&doc); err != nil {
 		if errors.Is(err, io.EOF) {
-			return errors.New("the file holds no document")
+			return nil, errors.New("the file holds no document")
 		}
-		return err
+		return nil, err
 	}
 	var extra yaml.Node
 	if err := nodes.Decode(&extra); !errors.Is(err, io.EOF) {
-		return errors.New("the file holds more than one document")
+		return nil, errors.New("the file holds more than one document")
 	}
 	if n := findAnchorOrAlias(&doc); n != nil {
-		return fmt.Errorf("line %d: an anchor, an alias or a merge key is not allowed", n.Line)
+		return nil, fmt.Errorf("line %d: an anchor, an alias or a merge key is not allowed", n.Line)
 	}
-	return decodeStrictBytes(data, out)
+	return &doc, nil
 }
 
 // findAnchorOrAlias is the first node, in document order, that carries an anchor, is an

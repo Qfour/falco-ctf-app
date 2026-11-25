@@ -23,7 +23,6 @@ import (
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
-	"github.com/Qfour/falco-ctf-app/internal/catalog/catalogtest"
 )
 
 // nimbusbreachArcPins is the intersection set of the canonical 01 to 10 arc
@@ -205,12 +204,13 @@ func TestDiffEvadePins_NegativeCases(t *testing.T) {
 	}
 }
 
-// writeGuardScenario writes <root>/<name>/ with the given ordered challenges
-// (catalogtest: a module.yaml and its scenario.yaml). Fixtures stay under
-// t.TempDir(); the real scenarios/ tree is never touched.
-func writeGuardScenario(t *testing.T, root, name string, challenges ...string) {
+// writeGuardScenario writes <root>/<name>/ with the given ordered challenges of chalDir
+// (catalog.WriteScenarioFor: a module.yaml and its scenario.yaml, with the requirements the
+// scope derives, which LoadScored compares). Fixtures stay under t.TempDir(); the real
+// scenarios/ tree is never touched.
+func writeGuardScenario(t *testing.T, chalDir, root, name string, challenges ...string) {
 	t.Helper()
-	catalogtest.WriteScenario(t, root, name, challenges...)
+	catalog.WriteScenarioFor(t, root, chalDir, name, challenges...)
 }
 
 // End to end on a synthetic tree, through the same calls the real test makes
@@ -223,8 +223,8 @@ func TestEvadePins_EveryScenarioInTheTreeIsChecked(t *testing.T) {
 	writeChallenge(t, chalDir, "01-recon", "challengeId: \"01-recon\"\ntype: trigger\nexpectedRules:\n  - \"r1\"\n")
 	writeChallenge(t, chalDir, "02-evade", "challengeId: \"02-evade\"\ntype: evade\nforbiddenRules:\n  - \"r1\"\nexpectedFlag: \"FALCO{dev-02}\"\n")
 	scnDir := filepath.Join(dir, "scenarios")
-	writeGuardScenario(t, scnDir, "alpha", "02-evade", "01-recon") // evade first: no shared fire
-	writeGuardScenario(t, scnDir, "beta", "01-recon", "02-evade")  // trigger first: shares r1
+	writeGuardScenario(t, chalDir, scnDir, "alpha", "02-evade", "01-recon") // evade first: no shared fire
+	writeGuardScenario(t, chalDir, scnDir, "beta", "01-recon", "02-evade")  // trigger first: shares r1
 
 	cat, err := catalog.Load(chalDir)
 	if err != nil {
@@ -379,7 +379,7 @@ func TestV39_PlacementRule_EachFailureModeIsRedAndEachControlIsGreen(t *testing.
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			name := fmt.Sprintf("case-%d", i)
-			writeGuardScenario(t, scnDir, name, tc.order...)
+			writeGuardScenario(t, chalDir, scnDir, name, tc.order...)
 			late, err := evadesAfterInvestigate(cat, tc.order)
 			if err != nil {
 				t.Fatal(err)

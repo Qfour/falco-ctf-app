@@ -9,3 +9,9 @@ source:
   modules:
     - id: onboarding
       version: 1
+requirements:
+  answers: []
+  detect: false
+  exfil: false
+  rules:
+    - Execution from /dev/shm
