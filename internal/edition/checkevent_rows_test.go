@@ -44,20 +44,25 @@ func TestRenderEvent_AnEditionWithCluesGoesThroughTheSelfCheckAndTheCheck(t *tes
 	}
 }
 
-// (b) A clue line of when's group broken, rendered and checked: the rule that names it, and that
-// rule alone. Line 1's clue line holds the second clue (when-cb), so that without the first one
-// the answer and line 1 are left: 2 x attempts.
+// (b) A clue line of when's group broken, rendered and checked: the rules that name it, and those
+// rules alone. Line 1's clue line holds the second clue (when-cb), so that without the first one
+// the answer and line 1 are left: 2 x attempts. A decoy's clue line with the answer's very words
+// is refused by B17 and, since PR 4c, by B7 too: (o3) finds the answer's clue line by the words of
+// its clue columns, and two lines of the bundle have them (ADR-0056 amendment 32). With the two
+// words swapped, the decoy's clue line holds every clue and B17 alone refuses it.
 func TestCheckEvent_ABrokenClueLineIsRefusedByItsRule(t *testing.T) {
 	cases := []struct {
-		name string
-		tmpl string
-		rule string
+		name  string
+		tmpl  string
+		rules []string
 	}{
-		{"accepted as it is", editiontest.GoodTemplate(), ""},
-		{"a decoy's clue line with the answer's clue words ((b17-3) (i) and (ii))",
-			erWithClueLine(t, "when", 1, "when clue key {{ctf:when-k1}} by when-ca at when-cb"), edition.RuleRowSymmetry},
+		{"accepted as it is", editiontest.GoodTemplate(), nil},
+		{"a decoy's clue line with the answer's clue words ((b17-3) (i) and (ii), and (o3))",
+			erWithClueLine(t, "when", 1, "when clue key {{ctf:when-k1}} by when-ca at when-cb"), []string{edition.RuleRowSymmetry, edition.RuleDecoySpread}}, // cevRuleSet's order: B17 < B7
+		{"a decoy's clue line with the answer's clue words in the other columns ((b17-3) (ii))",
+			erWithClueLine(t, "when", 1, "when clue key {{ctf:when-k1}} by when-cb at when-ca"), []string{edition.RuleRowSymmetry}},
 		{"line 1's second clue taken away: the second clue alone leaves the answer only (B19)",
-			erWithClueLine(t, "when", 1, "when clue key {{ctf:when-k1}} by when-x1 at when-z1"), edition.RuleClueSpace},
+			erWithClueLine(t, "when", 1, "when clue key {{ctf:when-k1}} by when-x1 at when-z1"), []string{edition.RuleClueSpace}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -66,15 +71,15 @@ func TestCheckEvent_ABrokenClueLineIsRefusedByItsRule(t *testing.T) {
 				decoys:    editiontest.GoodDecoys,
 				tmplEdit:  func(string) string { return c.tmpl },
 			})
-			if c.rule == "" {
+			if c.rules == nil {
 				if ev, _, err := f.check(); err != nil || ev == nil {
 					t.Fatalf("the edition with clues was refused: %v", err)
 				}
 				return
 			}
 			err, _ := f.refused(c.name)
-			if got := cevRuleSet(err); !slices.Equal(got, []string{c.rule}) {
-				t.Errorf("rules %v, want exactly [%s]: %v", got, c.rule, err)
+			if got := cevRuleSet(err); !slices.Equal(got, c.rules) {
+				t.Errorf("rules %v, want exactly %v: %v", got, c.rules, err)
 			}
 		})
 	}

@@ -93,11 +93,11 @@ func sbKeyed(lines []string, g, kp string, from, n int) []string {
 }
 
 // sbWithKeys is d with the clues of the answer slot of index i set to editiontest.Clues(g) and
-// the keys <kp>-k0 .. <kp>-k<n-1> declared (sbKeyed's).
+// the keys <kp>-k0 .. <kp>-k<n-1> declared (sbKeyed's), of editiontest.KeyVocab (E2 (e5)).
 func sbWithKeys(d specDoc, i int, g, kp string, n int) specDoc {
 	d = d.with(i, func(s *specSlot) { s.clues = editiontest.Clues(g) })
 	for j := range n {
-		d = sbWithFillers(d, specSlot{name: fmt.Sprintf("%s-k%d", kp, j), role: "filler", format: "name", vocab: "[[ka, kb, kc]]"})
+		d = sbWithFillers(d, specSlot{name: fmt.Sprintf("%s-k%d", kp, j), role: "filler", format: "name", vocab: editiontest.KeyVocab})
 	}
 	return d
 }
@@ -500,10 +500,13 @@ func sbRenderTemplate(spec *edition.Spec) ([]edition.BundleFile, int) {
 	return files, len(c)
 }
 
-// sbRenderKeys is d with the keys wk0 .. wk<n-1> of sbRenderTemplate declared.
+// sbRenderKeys is d with the keys wk0 .. wk<n-1> of sbRenderTemplate declared, all alike (E2 holds
+// the keys at one word of the lines of a block to one declaration): hexids of 16 digits, a space of
+// 16^16 (E2 (e5) asks n), in which n keys drawn as they come do not meet, so the keys of the block,
+// which the renderer draws apart in a seat (amendment 32), are the ones drawn without the block.
 func sbRenderKeys(d specDoc, n int) specDoc {
 	for j := range n {
-		d = sbWithFillers(d, specSlot{name: fmt.Sprintf("wk%d", j), role: "filler", format: "name", vocab: "[[ka, kb, kc]]"})
+		d = sbWithFillers(d, specSlot{name: fmt.Sprintf("wk%d", j), role: "filler", format: "hexid", length: "16"})
 	}
 	return d
 }

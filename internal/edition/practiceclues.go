@@ -1,21 +1,40 @@
 package edition
 
-// practiceclues.go is D10 B18 (ADR-0056 amendment 27, revised by amendments 28 and 30, A7-x PR
-// 4b; the event only): the clue words that lead to an event answer do not hold the clue words that
-// lead to the image's practice answer of the same question.
+// practiceclues.go is D10 B18 (ADR-0056 amendment 27, revised by amendments 28, 30 and 32, A7-x PR
+// 4b and 4c; the event only): the clue words that lead to an event answer do not hold the clue
+// words that lead to the image's practice answer of the same question, and the practice's clue
+// words do not narrow the event's group below the threshold of B19.
 //
 // What a reader of the repository can take from the public practice edition, and use on an event
 // bundle, is the combination of clues that leads to a practice answer (which container and which
 // process, say): one grep with it, and the key, and the event answer is reached. So, for every
 // question (its id, qid: the catalog fixes it, and E2 ties one answer slot to it, so it is the
-// same in the event and in the practice edition; the slots' names may differ), the clue words of
-// the event's answer lines (E_c) must not hold every clue word of the practice edition's answer
-// lines (P_c): an E_c that holds P_c (a superset of it, or the same set) is refused. The words of a line are its combination of (b17-3)
-// (clueCombination: the clues of the slot in the line and in its clue lines, the lines outside
-// every block that share a filler mark with it, one step), read as B17 and B19 read them
-// (readRows). Two sets are compared: the union of the combinations of the answer's lines, and each
-// combination of an event answer line with each of a practice answer line (an answer written in
-// more than one block has more than one line; a combination of one of them is a grep of its own).
+// same in the event and in the practice edition; the slots' names may differ), two things are
+// asked, and an answer slot that breaks either is refused once:
+//
+//   - the clue words of the event's answer lines (E_c) do not hold every clue word of the practice
+//     edition's answer lines (P_c): an E_c that holds P_c (a superset of it, or the same set) is
+//     refused. The words of a line are its combination of (b17-3) (clueCombination: the clues of
+//     the slot in the line and in its clue lines, the lines outside every block that share a filler
+//     mark with it, one step), read as B17 and B19 read them (readRows). Two sets are compared: the
+//     union of the combinations of the answer's lines, and each combination of an event answer
+//     line with each of a practice answer line (an answer written in more than one block has more
+//     than one line; a combination of one of them is a grep of its own);
+//   - Q2-1 (amendment 32, security's condition): E_c is the event's DECLARED clues only, so a
+//     practice clue word that every line of the event's group holds as a literal word (the event
+//     does not declare it) passes the comparison above, and a grep with the practice's clues still
+//     narrows the group. So, for each block of the event's group, Q* = the words of P_c (the
+//     union) that are literal words of the answer's line or of its clue line, and the rows of the
+//     block (a line of
+//     the block and its clue line: the group's rows, all of one shape, E2 and B17) that hold every
+//     word of Q* are at least the threshold of B19 (clueSpaceThreshold, 2 x attempts). The union
+//     is the strictest: a part of it leaves no fewer rows. An empty Q* (no practice clue word on the
+//     event's answer row) leaves every row of the block, which B19's bound c x (2 x attempts - 1)
+//     <= K makes at least the threshold. The comparison above is kept beside it: Q2-1 holds the case
+//     E_c = P_c (only the answer's row holds every declared clue, (b17-3) (ii)), but not an E_c
+//     that holds P_c and one clue more (the event's B19 leaves the threshold for a part of its
+//     clues), which V112 (2) refuses. A slot in no block is B17's to refuse; Q2-1 counts the rows of
+//     a group's blocks.
 //
 // The practice edition is read from the image: its edition.yaml (ParseSpec; it holds no key) and
 // its template (readPracticeFiles, through the CheckedTable). An input that does not let B18 name
@@ -32,6 +51,7 @@ package edition
 
 import (
 	"errors"
+	"fmt"
 	"maps"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
@@ -46,16 +66,6 @@ const RulePracticeClues = "B18"
 type answerClues struct {
 	lines []map[string]bool
 	union map[string]bool
-}
-
-// holdsAll reports whether every word of p is in e.
-func holdsAll(e, p map[string]bool) bool {
-	for w := range p {
-		if !e[w] {
-			return false
-		}
-	}
-	return true
 }
 
 // holds reports whether the event's clue words e hold the practice's p: the union holds the union,
@@ -95,13 +105,44 @@ func (s *Spec) answerCluesOf(rows *editionRows) map[string]*answerClues {
 	return out
 }
 
+// practiceRows is Q2-1 for the event's answer slot sl and the practice's clue words p: the fewest,
+// over the blocks of sl's group, of the rows of the block (a line and its clue line) that hold
+// every word of Q* (the words of p that are literal words of the block's answer line or of its
+// clue line), and
+// whether sl's group has a block.
+func (r *editionRows) practiceRows(sl *Slot, p map[string]bool) (int, bool) {
+	least, found := 0, false
+	for _, bc := range r.clues {
+		if bc == nil || bc.f.group != sl.Name {
+			continue
+		}
+		a := bc.f.answer
+		q := make(map[string]bool)
+		for w := range p {
+			if bc.rows[a].words[w] || bc.lines[a].words[w] {
+				q[w] = true
+			}
+		}
+		n := 0
+		for j := range bc.rows {
+			if rowHolds(bc.rows[j], bc.lines[j], q) {
+				n++
+			}
+		}
+		if !found || n < least {
+			least, found = n, true
+		}
+	}
+	return least, found
+}
+
 // CheckPracticeClues applies B18 to the event edition of challenge cid (s: its edition.yaml; qs:
 // its questions, the ones CheckQuestions is given; template: its template/) and the image's
 // practice edition of the same challenge (practiceSpec: the bytes of its edition.yaml, nil when it
 // is missing or could not be read; practiceTemplate: its template/). It returns nil, or an
 // errors.Join of *Violation (at most maxViolations listed: an input B18 cannot read is one
 // violation and nothing is compared; else the answer slots of the event in the order of its
-// edition.yaml). It reads no file.
+// edition.yaml, one violation each at most). It reads no file.
 func (s *Spec) CheckPracticeClues(cid string, qs []catalog.Question, template []BundleFile, practiceSpec []byte, practiceTemplate []BundleFile) error {
 	if s == nil {
 		return errors.New("edition: the spec is missing")
@@ -143,6 +184,17 @@ func (s *Spec) CheckPracticeClues(cid string, qs []catalog.Question, template []
 			c.add(refuse("the image's practice edition has no answer slot of the question, so B18 cannot compare its clue words (fail-closed)", sl.Question))
 		case ev[sl.Question].holds(p):
 			c.add(refuse("the clue words of the event's answer hold every clue word of the practice edition's answer of the same question (a grep with the practice's clues would reach the event's answer; a practice answer with no clue word is held by every event)", sl.Question))
+		default:
+			q, found := findQuestion(qs, sl.Question)
+			if !found {
+				// E2 (readRows) holds every answer slot to a question of qs; kept, fail-closed.
+				c.add(refuse("the answer slot names no question of the challenge, so B18 cannot take the threshold of Q2-1 (fail-closed)", sl.Question))
+				continue
+			}
+			n, blocked := event.practiceRows(sl, p.union)
+			if need := clueSpaceThreshold(q); blocked && n < need {
+				c.add(refuse(fmt.Sprintf("the rows of a block of the event's answer (a line and its clue line) that hold every clue word of the practice edition's answer that is on the event's answer row are %d, below the threshold of B19, 2 x attempts (%d): a grep with the practice's clues leaves fewer candidates than the threshold (Q2-1)", n, need), sl.Question))
+			}
 		}
 	}
 	return c.err()

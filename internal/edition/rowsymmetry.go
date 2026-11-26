@@ -7,8 +7,9 @@ package edition
 // line of each decoy, the same but for their marks; outside the blocks, each line of the group has
 // one clue line (a line that shares a filler mark with it, its key), and the clue lines are the
 // same but for their marks and their clue columns (the words of the answer's clue line that are
-// the declared clues). That much is E2's (specblocks.go, (e1) to (e4)), on the helpers of this file
-// (blockRows, clueLinesOf, clueColumns, clueMasked).
+// the declared clues). That much is E2's (specblocks.go, (e1) to (e5)), on the model of the lines
+// that E2 and these rules share (rowindex.go: the index of the lines, and each block read as the
+// lines of its group and their clue lines once, deriveBlockClue).
 //
 //   - B17: every line of the template that holds the mark of an answer slot is in a block (D12,
 //     amendment 28), so it is a line of a group (E2, CheckBlocksAndClues, holds a block to one
@@ -42,14 +43,12 @@ package edition
 //     (no proper subset: nothing to say) is one outside every block, which B17 refuses. A
 //     narrowing by a time range or by joining files is not counted (the review's).
 //
-// They read the template once with the lexer of the marks (readMarkedText and templateTokens,
-// the one mapping from a mark to its word), and the blocks with blockForms (the reading the
-// renderer and B7 share): readRows. They need E2: an edition that CheckQuestions or
-// CheckBlocksAndClues refuses is refused here too, as B17, and is not compared (fail-closed). B18
-// (practiceclues.go) reads the clue lines of an answer with the same readRows and clueCombination.
-// They hold no key, no answer and draw nothing, and are not a render file. A violation names the
-// rule, the challenge, the question, the slot, the file and the line, never a word of the template
-// or a clue (a clue is named by its index).
+// They read the template once with readRows (rowindex.go). They need E2: an edition that
+// CheckQuestions or CheckBlocksAndClues refuses is refused here too, as B17, and is not compared
+// (fail-closed). B18 (practiceclues.go) reads the same rows. They hold no key, no answer and draw
+// nothing, and are not a render file. A violation names the rule, the challenge, the question,
+// the slot, the file and the line, never a word of the template or a clue (a clue is named by its
+// index).
 
 import (
 	"errors"
@@ -75,236 +74,6 @@ type RowReport struct {
 	Blocks int
 	// ClueSets is how many subsets of the clues of one fewer B19 counted the values of.
 	ClueSets int
-}
-
-// rowLine is one line of the template as B17 and B19 read it.
-type rowLine struct {
-	at fileLine
-	// pseudo is the line with each mark one token byte (readMarkedText), toks its tokens.
-	pseudo []byte
-	toks   []templateToken
-	// slots are the slots of the marks of the line, each once, in order; words its literal tokens.
-	slots []string
-	words map[string]bool
-	// inBlock says the line is in a block of the spec.
-	inBlock bool
-}
-
-// rowIndex is every line of the template, and where each slot's marks are.
-type rowIndex struct {
-	lines []*rowLine
-	byAt  map[fileLine]*rowLine
-	// count is the number of marks of each slot in the whole template; bySlot the lines that hold
-	// a mark of it (each line once).
-	count  map[string]int
-	bySlot map[string][]*rowLine
-}
-
-// newRowIndex reads every line of the template, in the order of the files and of their lines,
-// and marks the lines of the blocks. A file the lexer of the marks refuses is returned by its name
-// (and no index): its lines are not known.
-func newRowIndex(template []BundleFile, forms []blockForm) (*rowIndex, string) {
-	x := &rowIndex{byAt: make(map[fileLine]*rowLine), count: make(map[string]int), bySlot: make(map[string][]*rowLine)}
-	for _, f := range template {
-		if _, err := ScanMarks(f.Data); err != nil {
-			return nil, f.Name
-		}
-		for li, raw := range templateLines(f.Data) {
-			mt, err := readMarkedText(raw)
-			if err != nil {
-				return nil, f.Name
-			}
-			toks, err := templateTokens(raw)
-			if err != nil {
-				return nil, f.Name
-			}
-			ln := &rowLine{at: fileLine{f.Name, li + 1}, pseudo: mt.pseudo, toks: toks, words: make(map[string]bool)}
-			for _, t := range toks {
-				if len(t.slots) == 0 {
-					ln.words[string(t.lit)] = true
-				}
-				for _, sl := range t.slots {
-					x.count[sl]++
-					if !slices.Contains(ln.slots, sl) {
-						ln.slots = append(ln.slots, sl)
-						x.bySlot[sl] = append(x.bySlot[sl], ln)
-					}
-				}
-			}
-			x.lines = append(x.lines, ln)
-			x.byAt[ln.at] = ln
-		}
-	}
-	for _, fm := range forms {
-		for j := range fm.lines() {
-			if ln := x.byAt[fileLine{fm.file, fm.from + j + 1}]; ln != nil {
-				ln.inBlock = true
-			}
-		}
-	}
-	return x, ""
-}
-
-// tied is the lines that share a filler mark with ln (the key of a clue line), ln left out, each
-// once, in the order of the template. With outside, only the lines that are in no block.
-func (x *rowIndex) tied(ln *rowLine, gi *groupIndex, outside bool) []*rowLine {
-	var out []*rowLine
-	seen := map[*rowLine]bool{ln: true}
-	for _, sl := range ln.slots {
-		if d := gi.decl[sl]; d == nil || d.Role != RoleFiller {
-			continue
-		}
-		for _, o := range x.bySlot[sl] {
-			if seen[o] || (outside && o.inBlock) {
-				continue
-			}
-			seen[o] = true
-			out = append(out, o)
-		}
-	}
-	return out
-}
-
-// editionRows is what B17, B18 and B19 read of an edition: the forms of its blocks, the index of
-// its template's lines and its group index.
-type editionRows struct {
-	forms []blockForm
-	x     *rowIndex
-	gi    *groupIndex
-}
-
-// readRows reads them for the edition of challenge cid (qs: its questions), or returns no rows,
-// why they cannot be read (a clause, for the caller's message) and the file it is about (""
-// when it is no one file): the edition does not hold to E2 (CheckQuestions, CheckBlocksAndClues:
-// a refused edition is not compared, fail-closed), its blocks cannot be read, or a file of the
-// template has a mark opener that is not a mark. It reads no file.
-func (s *Spec) readRows(cid string, qs []catalog.Question, template []BundleFile) (*editionRows, string, string) {
-	if errors.Join(s.CheckQuestions(cid, qs), s.CheckBlocksAndClues(cid, template)) != nil {
-		return nil, "the edition does not hold to E2 (its questions, blocks or clues)", ""
-	}
-	forms, err := s.blockForms(template)
-	if err != nil {
-		return nil, "the blocks of the edition cannot be read", ""
-	}
-	x, bad := newRowIndex(template, forms)
-	if bad != "" {
-		return nil, "the template has a " + MarkOpen + " that is not a mark", bad
-	}
-	return &editionRows{forms: forms, x: x, gi: s.newGroupIndex()}, "", ""
-}
-
-// clueSet is the clues of an answer slot, as a set.
-func clueSet(sl *Slot) map[string]bool {
-	out := make(map[string]bool, len(sl.Clues))
-	for _, w := range sl.Clues {
-		out[w] = true
-	}
-	return out
-}
-
-// clueCombination is the combination of clue words of a line of a group ((b17-3), amendments 29
-// and 31): the declared clues that ln holds and that the lines outside every block that share a
-// filler mark with it (its clue line, one step) hold. (b17-3) (ii) and B18 read it.
-func clueCombination(ln *rowLine, clues map[string]bool, gi *groupIndex, x *rowIndex) map[string]bool {
-	m := make(map[string]bool)
-	for _, l := range append([]*rowLine{ln}, x.tied(ln, gi, true)...) {
-		for w := range l.words {
-			if clues[w] {
-				m[w] = true
-			}
-		}
-	}
-	return m
-}
-
-// blockRows is the lines of block f in x, in its order, or nil when one of them is not the line
-// the blocks were read from (blockForms read the same template: fail-closed all the same).
-func blockRows(f *blockForm, x *rowIndex) []*rowLine {
-	rows := make([]*rowLine, f.lines())
-	for j := range rows {
-		rows[j] = x.byAt[fileLine{f.file, f.from + j + 1}]
-		if rows[j] == nil || len(rows[j].toks) != f.tokens {
-			return nil
-		}
-	}
-	return rows
-}
-
-// clueLinesOf is (e2) for the lines of one block (amendment 31): the clue line of each, the one
-// line outside every block that shares a filler mark with it, which no other line of a group
-// shares a filler mark with (owner: each clue line seen so far, by the line of a group it is
-// tied to). A line with no clue line or with two, and a clue line of two lines, are given to bad,
-// and the result is then not ok.
-func clueLinesOf(rows []*rowLine, gi *groupIndex, x *rowIndex, owner map[*rowLine]*rowLine, bad func(string, fileLine)) ([]*rowLine, bool) {
-	out := make([]*rowLine, len(rows))
-	ok := true
-	for j, r := range rows {
-		t := x.tied(r, gi, true)
-		if len(t) != 1 {
-			bad(fmt.Sprintf("the line of the group shares a filler mark with %d lines outside the blocks; it has exactly one clue line, its key's (E2 (e2))", len(t)), r.at)
-			ok = false
-			continue
-		}
-		if o := owner[t[0]]; o != nil && o != r {
-			bad("the clue line shares a filler mark with two lines of groups; a clue line is of one line of a group (E2 (e2))", t[0].at)
-			ok = false
-			continue
-		}
-		owner[t[0]] = r
-		out[j] = t[0]
-	}
-	return out, ok
-}
-
-// clueColumns is (e3): the clue columns of a group, the words of the answer's clue line ans that
-// are its declared clues (the first such word of each clue), in ascending order. A clue that is
-// not a literal word of ans is returned by its index (and no columns).
-func clueColumns(sl *Slot, ans *rowLine) ([]int, int) {
-	cols := make([]int, 0, len(sl.Clues))
-	for i, w := range sl.Clues {
-		at := -1
-		for ti, t := range ans.toks {
-			if len(t.slots) == 0 && string(t.lit) == w {
-				at = ti
-				break
-			}
-		}
-		if at < 0 {
-			return nil, i
-		}
-		cols = append(cols, at)
-	}
-	slices.Sort(cols)
-	return cols, -1
-}
-
-// clueMasked is the words of a clue line that are put out of sight when the clue lines are
-// compared ((e4)): its marks and the clue columns, in ascending order.
-func clueMasked(ln *rowLine, cols []int) []int {
-	var out []int
-	for ti, t := range ln.toks {
-		if len(t.slots) > 0 || slices.Contains(cols, ti) {
-			out = append(out, ti)
-		}
-	}
-	return out
-}
-
-// markCountsDiffer reports whether a mark at a word of cols of line l occurs in the whole template
-// another number of times than the mark at the same word of ref ((b17-1), its second half).
-func markCountsDiffer(ref, l *rowLine, cols []int, x *rowIndex) bool {
-	for _, col := range cols {
-		a, b := ref.toks[col].slots, l.toks[col].slots
-		if len(a) != len(b) {
-			return true
-		}
-		for k := range a {
-			if x.count[a[k]] != x.count[b[k]] {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // uniqueMax reports whether n[at] is larger than every other n[j] (and there is another).
@@ -341,7 +110,6 @@ func (s *Spec) CheckRowRules(cid string, qs []catalog.Question, template []Bundl
 	if rows == nil {
 		return refuse(why+", so B17 and B19 cannot compare its lines", file)
 	}
-	forms, x, gi := rows.forms, rows.x, rows.gi
 	var c collector
 	for i := range s.Slots {
 		sl := &s.Slots[i]
@@ -356,25 +124,25 @@ func (s *Spec) CheckRowRules(cid string, qs []catalog.Question, template []Bundl
 			continue
 		}
 		before := len(c.errs) + c.dropped
-		checkGroupRows(cid, sl, forms, gi, x, &c, &rep)
+		checkGroupRows(cid, sl, rows, &c, &rep)
 		if len(c.errs)+c.dropped != before {
 			// B17 refused the slot: its group has no shape B19 could count in, and the slot is
 			// refused already (fail-closed). B19 runs on a slot that B17 accepted only.
 			continue
 		}
-		checkClueSpace(cid, i, sl, q, qs, forms, gi, x, &c, &rep)
+		checkClueSpace(cid, i, sl, q, qs, rows, &c, &rep)
 	}
 	return rep, c.err()
 }
 
 // checkGroupRows is B17 for one answer slot.
-func checkGroupRows(cid string, sl *Slot, forms []blockForm, gi *groupIndex, x *rowIndex, c *collector, rep *RowReport) {
+func checkGroupRows(cid string, sl *Slot, rows *editionRows, c *collector, rep *RowReport) {
 	bad := func(msg string, at fileLine) {
 		v := newSpecViolation(RuleRowSymmetry, msg, at.line, cid, sl.Question, sl.Name, "", nil)
 		v.File = shownName(at.file)
 		c.add(v)
 	}
-	lines := x.bySlot[sl.Name]
+	lines := rows.x.bySlot[sl.Name]
 	if len(lines) == 0 {
 		c.add(newSpecViolation(RuleRowSymmetry, "the mark of the answer slot is on no line of the template, so it has no group to compare", 0, cid, sl.Question, sl.Name, "", nil))
 		return
@@ -388,20 +156,21 @@ func checkGroupRows(cid string, sl *Slot, forms []blockForm, gi *groupIndex, x *
 	if len(outside) > 0 {
 		bad(fmt.Sprintf("%d of the %d lines that hold the mark of the answer slot are in no block, the first of them here (the lines of a group, the answer's and one of each decoy's, are in one block: blocks)", len(outside), len(lines)), outside[0].at)
 	}
-	for i := range forms {
-		f := &forms[i]
+	for i := range rows.forms {
+		f := &rows.forms[i]
 		if f.group != sl.Name {
 			continue
 		}
 		rep.Blocks++
-		rows := blockRows(f, x)
-		if rows == nil {
-			bad("a line of the block is not the line the blocks were read from", fileLine{f.file, f.from + 1})
+		bc := rows.clues[i]
+		if bc == nil {
+			// readRows reads the clue lines of every block (E2 holds them); kept, fail-closed.
+			bad("the lines of the block and their clue lines cannot be read", fileLine{f.file, f.from + 1})
 			continue
 		}
-		checkRowWords(f, rows, bad)
-		checkRowMarkCounts(f, rows, x, bad)
-		checkRowClues(f, rows, sl, gi, x, bad)
+		checkRowWords(f, bc.rows, bad)
+		checkRowMarkCounts(f, bc.rows, rows.x, bad)
+		checkRowClues(bc, sl, rows.gi, rows.x, bad)
 	}
 }
 
@@ -430,19 +199,11 @@ func checkRowMarkCounts(f *blockForm, rows []*rowLine, x *rowIndex, bad func(str
 }
 
 // checkRowClues is (b17-3) for one block (amendment 31): (i) to (iv) on the tuples of the words of
-// the clue columns of each line's clue line, and (ii) on the combinations of declared clues. E2
-// holds the clue lines and their columns ((e2), (e3)); if they cannot be read here they are given
-// to bad (fail-closed).
-func checkRowClues(f *blockForm, rows []*rowLine, sl *Slot, gi *groupIndex, x *rowIndex, bad func(string, fileLine)) {
-	lines, ok := clueLinesOf(rows, gi, x, make(map[*rowLine]*rowLine), bad)
-	if !ok {
-		return
-	}
-	cols, missing := clueColumns(sl, lines[f.answer])
-	if missing >= 0 {
-		bad(fmt.Sprintf("clues[%d] is not a literal word of the answer's clue line, so (b17-3) has no clue columns (E2 (e3))", missing), lines[f.answer].at)
-		return
-	}
+// the clue columns of each line's clue line, and (ii) on the combinations of declared clues. The
+// clue lines and their columns are the block's one derivation (bc: E2's (e2), (e3)); a clue line
+// whose clue columns cannot be read is given to bad (fail-closed).
+func checkRowClues(bc *blockClue, sl *Slot, gi *groupIndex, x *rowIndex, bad func(string, fileLine)) {
+	f, rows, lines, cols := bc.f, bc.rows, bc.lines, bc.cols
 	tuples := make([][]string, len(lines))
 	keys := make([]string, len(lines))
 	for j, l := range lines {
@@ -501,7 +262,7 @@ func checkRowClues(f *blockForm, rows []*rowLine, sl *Slot, gi *groupIndex, x *r
 }
 
 // clueSpaceThreshold is B19's threshold for question q: 2 x attempts (amendment 31, security's
-// condition). It is the one place the threshold is taken.
+// condition). It is the one place the threshold is taken (B18's Q2-1 reads it too).
 func clueSpaceThreshold(q catalog.Question) int {
 	return 2 * q.Attempts
 }
@@ -521,36 +282,24 @@ func (s rowShape) holds(ln *rowLine) bool {
 // condition): for each block of the group, the signature of its lines (their marks put out of
 // sight) and that of its clue lines (their marks and their clue columns put out of sight). It is
 // read for a slot B17 accepted (its lines are all in blocks, of one shape, with their clue lines).
-func groupShapes(sl *Slot, forms []blockForm, gi *groupIndex, x *rowIndex) []rowShape {
+func groupShapes(sl *Slot, rows *editionRows) []rowShape {
 	var out []rowShape
-	for i := range forms {
-		f := &forms[i]
-		if f.group != sl.Name {
+	for _, bc := range rows.clues {
+		if bc == nil || bc.f.group != sl.Name {
 			continue
 		}
-		rows := blockRows(f, x)
-		if rows == nil {
-			continue
-		}
-		out = append(out, rowShape{masked: f.masked, sig: lineSignature(rows[f.answer].pseudo, f.masked)})
-		lines, ok := clueLinesOf(rows, gi, x, make(map[*rowLine]*rowLine), func(string, fileLine) {})
-		if !ok {
-			continue
-		}
-		cols, missing := clueColumns(sl, lines[f.answer])
-		if missing >= 0 {
-			continue
-		}
-		masked := clueMasked(lines[f.answer], cols)
-		out = append(out, rowShape{masked: masked, sig: lineSignature(lines[f.answer].pseudo, masked)})
+		f := bc.f
+		out = append(out, rowShape{masked: f.masked, sig: lineSignature(bc.rows[f.answer].pseudo, f.masked)})
+		masked := clueMasked(bc.lines[f.answer], bc.cols)
+		out = append(out, rowShape{masked: masked, sig: lineSignature(bc.lines[f.answer].pseudo, masked)})
 	}
 	return out
 }
 
 // checkClueSpace is B19 for one answer slot (the idx-th of edition.yaml).
-func checkClueSpace(cid string, idx int, sl *Slot, q catalog.Question, qs []catalog.Question, forms []blockForm, gi *groupIndex, x *rowIndex, c *collector, rep *RowReport) {
+func checkClueSpace(cid string, idx int, sl *Slot, q catalog.Question, qs []catalog.Question, rows *editionRows, c *collector, rep *RowReport) {
 	need := clueSpaceThreshold(q)
-	shapes := groupShapes(sl, forms, gi, x)
+	shapes := groupShapes(sl, rows)
 	for omit := range sl.Clues {
 		rep.ClueSets++
 		var part []string
@@ -559,7 +308,7 @@ func checkClueSpace(cid string, idx int, sl *Slot, q catalog.Question, qs []cata
 				part = append(part, w)
 			}
 		}
-		if n := x.candidates(part, sl, qs, gi, shapes); n < need {
+		if n := rows.x.candidates(part, sl, qs, rows.gi, shapes); n < need {
 			c.add(newSpecViolation(RuleClueSpace, fmt.Sprintf("with every clue but clues[%d], the lines of the group's shape (its block's lines and its clue lines) that hold those clue words, and those tied to them by a filler mark, hold %d values declared as the answer slot (a literal word, and a line of another shape, are not counted), below the threshold of B19, 2 x attempts (%d): a part of the clues leaves fewer candidates than the threshold", omit, n, need), 0, cid, sl.Question, sl.Name, fmt.Sprintf("slots[%d].clues", idx), nil))
 		}
 	}

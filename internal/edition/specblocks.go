@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math/big"
 	"slices"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog/answerformat"
@@ -52,7 +53,8 @@ import (
 // mark. A slot name inside a mark, or a word glued to a mark, is not one.
 //
 // Then, when nothing above was refused (one defect, one violation), the clue lines of the groups
-// in blocks (amendment 31, checkClueLines): (e1) to (e4).
+// in blocks (amendment 31, checkClueLines): (e1) to (e4), and the space of the keys (e5,
+// amendment 32).
 //
 // It reads no file: the caller gives the template's bytes.
 func (s *Spec) CheckBlocksAndClues(cid string, template []BundleFile) error {
@@ -88,7 +90,7 @@ func (s *Spec) CheckBlocksAndClues(cid string, template []BundleFile) error {
 	return c.err()
 }
 
-// checkClueLines is E2's (e1) to (e4) (ADR-0056 amendment 31), on an edition whose blocks and
+// checkClueLines is E2's (e1) to (e5) (ADR-0056 amendments 31 and 32), on an edition whose blocks and
 // clues passed the rules of CheckBlocksAndClues before it:
 //
 //   - (e1) the answer slot of a group in a block declares a clue at least;
@@ -96,11 +98,16 @@ func (s *Spec) CheckBlocksAndClues(cid string, template []BundleFile) error {
 //     filler mark with it (its key), which no other line of a group shares one with (clueLinesOf);
 //   - (e3) every declared clue is a literal word of the answer's clue line, and that word is a clue
 //     column (clueColumns: the clue lines are compared by the place of a word, not by the word);
-//   - (e4) the other clue lines of the block have the answer's clue line's shape (checkClueLineShape).
+//   - (e4) the other clue lines of the block have the answer's clue line's shape (checkClueLineShape);
+//   - (e5) every key of the block (the fillers a line shares with its clue line) draws from at least
+//     as many values as the block has keys (checkKeySpace, amendment 32, security's condition), so
+//     that the renderer can draw the keys of a block apart in a seat.
 //
-// It reads the template with the index B17 reads (newRowIndex, rowsymmetry.go: there is one); it
-// does not call readRows, which calls this check. A file the lexer of the marks refuses is E3's
-// (the renderer's and the validator's own refusal), and the clue lines are then not looked at.
+// It reads the template with the index B17 reads (newRowIndex, rowindex.go: there is one), and a
+// block's clue lines and clue columns with the one derivation every reader shares
+// (deriveBlockClue); it does not call readRows, which calls this check. A file the lexer of the
+// marks refuses is E3's (the renderer's and the validator's own refusal), and the clue lines are
+// then not looked at.
 func (s *Spec) checkClueLines(cid string, template []BundleFile, gi *groupIndex, c *collector) {
 	if len(s.Blocks) == 0 {
 		return
@@ -132,22 +139,29 @@ func (s *Spec) checkClueLines(cid string, template []BundleFile, gi *groupIndex,
 			}
 			continue
 		}
-		rows := blockRows(f, x)
-		if rows == nil {
-			flag("a line of the block is not the line the blocks were read from", fileLine{f.file, f.from + 1})
+		bc := deriveBlockClue(f, sl, gi, x, owner, flag)
+		if bc == nil {
 			continue
 		}
-		lines, ok := clueLinesOf(rows, gi, x, owner, flag)
-		if !ok {
+		checkClueLineShape(f.answer, bc.lines, bc.cols, gi, x, flag)
+		checkKeySpace(bc, gi, flag)
+	}
+}
+
+// checkKeySpace is (e5) for one block (amendment 32, PR 4c, security's condition: each key once in
+// the lines of the block and once in the clue lines of a bundle): every key of the block draws
+// from at least as many values as the block has keys (fillerSpace), so the renderer, which draws
+// the keys of a block apart in a seat with one budget of maxDistinctTries a key, always has a value
+// left. A key that cannot be sized is refused too (fail-closed). One violation a block.
+func checkKeySpace(bc *blockClue, gi *groupIndex, flag func(string, fileLine)) {
+	keys := bc.keys(gi)
+	need := big.NewInt(int64(len(keys)))
+	for _, k := range keys {
+		if n, err := fillerSpace(gi.decl[k]); err == nil && n.Cmp(need) >= 0 {
 			continue
 		}
-		ans := lines[f.answer]
-		cols, missing := clueColumns(sl, ans)
-		if missing >= 0 {
-			flag(fmt.Sprintf("clues[%d] is not a literal word of the answer's clue line (E2 (e3): each clue is a word of it, and the place of that word is a clue column)", missing), ans.at)
-			continue
-		}
-		checkClueLineShape(f.answer, lines, cols, gi, x, flag)
+		flag(fmt.Sprintf("a key of the block (a filler that a line shares with its clue line) draws from fewer values than the block has keys (%d), so the keys cannot be drawn apart in a seat (E2 (e5): each key is on one line of the block and on one clue line)", len(keys)), fileLine{bc.f.file, bc.f.from + 1})
+		return
 	}
 }
 
