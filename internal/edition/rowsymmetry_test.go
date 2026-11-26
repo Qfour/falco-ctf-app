@@ -17,6 +17,7 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/catalog/answerformat"
 	"github.com/Qfour/falco-ctf-app/internal/edition"
+	"github.com/Qfour/falco-ctf-app/internal/edition/editiontest"
 )
 
 const rsCID = "01-demo"
@@ -43,6 +44,8 @@ type rsOpts struct {
 	c2 string
 	// clues replaces the clues of when (alpha, sh).
 	clues string
+	// keyVocab replaces the vocabulary of every key (editiontest.KeyVocab).
+	keyVocab string
 }
 
 // rsSpec is the synthetic edition.yaml: the answer `when` with 4 decoys and the clues alpha and
@@ -58,12 +61,16 @@ func rsSpec(o rsOpts) string {
 	case !o.noClues:
 		b.WriteString("    clues: [alpha, sh]\n")
 	}
+	keys := editiontest.KeyVocab
+	if o.keyVocab != "" {
+		keys = o.keyVocab
+	}
 	for i := range 5 {
 		if i == 3 && o.k3 != "" {
 			b.WriteString("  - " + o.k3 + "\n")
 			continue
 		}
-		fmt.Fprintf(&b, "  - {name: k%d, role: filler, format: name, vocab: [[ka, kb, kc]]}\n", i)
+		fmt.Fprintf(&b, "  - {name: k%d, role: filler, format: name, vocab: %s}\n", i, keys)
 	}
 	for i := range 5 {
 		if i == 2 && o.c2 != "" {
@@ -292,8 +299,9 @@ func TestRowRules_EachBrokenCopyIsRefused(t *testing.T) {
 	}
 }
 
-// E2's clue lines (amendment 31, V112 (3) (4)): each copy is one violation of E2 that names its
-// rule, refused by the renderer's and the validator's E2 alike, and so by B17 (not compared).
+// E2's clue lines (amendment 31, V112 (3) (4)) and the space of the keys ((e5), amendment 32):
+// each copy is one violation of E2 that names its rule, refused by the renderer's and the
+// validator's E2 alike, and so by B17 (not compared).
 func TestCheckBlocksAndClues_ClueLines(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -312,6 +320,8 @@ func TestCheckBlocksAndClues_ClueLines(t *testing.T) {
 		{"(e4) a mark in a clue column", rsOpts{}, "", rsClues(rsWords(2, "container {{ctf:n0}} proc init"), nil), "(e4)"},
 		{"(e4) a mark of a clue line declared otherwise", rsOpts{c2: "{name: c2, role: filler, format: timestamp, window: {from: 7200, to: 10800}}"}, "", "", "(e4)"},
 		{"(e4) a mark of a clue line that occurs once more", rsOpts{}, "", rsClues(rsClueWords, []string{"extra {{ctf:c3}} copy"}), "(e4)"},
+		// (e5), amendment 32: 5 keys of a vocabulary of 4 words cannot be drawn apart in a seat.
+		{"(e5) the keys of the block draw from fewer values than the block has keys", rsOpts{keyVocab: "[[ka, kb, kc, kd]]"}, "", "", "(e5)"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

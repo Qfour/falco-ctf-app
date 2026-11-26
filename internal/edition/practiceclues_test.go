@@ -110,6 +110,72 @@ func TestPracticeClues_RefusesAnEventThatHoldsThePracticesClues(t *testing.T) {
 	}
 }
 
+// pcRooted is the clue lines with " user root" after each: a word every row of the group holds.
+func pcRooted(words []string) []string {
+	out := slices.Clone(words)
+	for i := range out {
+		out[i] += " user root"
+	}
+	return out
+}
+
+// Q2-1 (amendment 32, security's condition), the architect's example: the practice declares the
+// clues alpha, sh and root; the event declares alpha and sh, and every row of its group (a line of
+// the block and its clue line) holds root, a word it does not declare. The event's declared clue
+// words do not hold the practice's (root is not one of them), so the comparison of the declared
+// words alone passes; but a grep with the practice's clues on the event's rows leaves the answer's
+// row alone (1, below 2 x attempts = 2): refused, once, naming no word. With the practice's clues
+// alpha and root, the rows that hold both are the answer's and line 2's: 2, the threshold, and the
+// event is accepted. (V112 (2), the event's declared clues holding the practice's and one more,
+// stays refused by the comparison of the declared words: TestPracticeClues_RefusesAnEventThatHolds
+// ThePracticesClues. Q2-1 alone would let it pass, as B19 leaves the threshold for a part of the
+// event's clues, so both are asked.)
+func TestPracticeClues_Q21APracticeClueThatEveryEventRowHolds(t *testing.T) {
+	ev := rsCheck(t, rsSpec(rsOpts{}), rsBlock(), rsClues(pcRooted(rsClueWords), nil))
+	if ev.err != nil {
+		t.Fatalf("the event is not accepted by B17 and B19: %v", ev.err)
+	}
+	check := func(clues string, words []string) error {
+		t.Helper()
+		spec, tmpl := pcPractice{answer: "pwhen", o: rsOpts{clues: clues}, words: words}.files()
+		return ev.spec.CheckPracticeClues(rsCID, rsQuestions(), ev.tmpl, spec, tmpl)
+	}
+	err := check("[alpha, sh, root]", pcRooted(rsClueWords))
+	vs := sbViolations(err)
+	if len(vs) != 1 || vs[0].Rule != edition.RulePracticeClues || vs[0].QID != "q1" || !strings.Contains(vs[0].Msg, "(Q2-1)") || !strings.Contains(vs[0].Msg, "are 1, below") {
+		t.Fatalf("violations = %v, want one of B18 at q1, Q2-1, 1 row", err)
+	}
+	rsNoValue(t, err)
+
+	// The practice's clue columns are alpha's and root's, so its other clue lines keep sh (E2 (e4)).
+	alphaRoot := []string{
+		"container alpha proc sh user root",
+		"container beta proc sh user www",
+		"container gamma proc sh user nobody",
+		"container delta proc sh user www",
+		"container omega proc sh user root",
+	}
+	if err := check("[alpha, root]", alphaRoot); err != nil {
+		t.Errorf("2 rows hold the practice's clues on the event's answer row (the threshold): %v; want it accepted", err)
+	}
+}
+
+// Q2-1 with no practice clue word on the event's answer row (Q* empty): every row of the block
+// holds Q*, 5 of a threshold of 2, and B18 says nothing (no grep with the practice's clues
+// narrows the event's group).
+func TestPracticeClues_Q21NoPracticeClueOnTheEventsAnswerRow(t *testing.T) {
+	spec, tmpl := pcPractice{answer: "pwhen", o: rsOpts{clues: "[zeta, eta]"}, words: []string{
+		"container zeta proc eta",
+		"container beta proc sh",
+		"container alpha proc init",
+		"container beta proc init",
+		"container gamma proc cron",
+	}}.files()
+	if err := pcCheck(t, spec, tmpl); err != nil {
+		t.Errorf("CheckPracticeClues = %v; want it accepted", err)
+	}
+}
+
 // An answer written on two lines of the practice edition (no block: E2 lets it be) has two
 // combinations; the event's answer combination holds one of them, though not their union: B18
 // refuses (one grep for each line).

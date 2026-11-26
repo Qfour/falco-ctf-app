@@ -42,8 +42,8 @@ func bkPlain(i int, slot string) string {
 	return fmt.Sprintf("{{ctf:tick-%d}} {{ctf:%s}} host {{ctf:key-%d}}", i+1, slot, i+1)
 }
 
-// bkClued is the lines of a group with a literal word of each line's own (B7's (o3) as it is
-// before PR 4c: B17 refuses such a block, B7 is what is looked at here).
+// bkClued is the lines of a group with a literal word of each line's own (the shape the (o3)
+// before PR 4c could tell apart: B17 refuses such a block, B7 is what is looked at here).
 func bkClued(i int, slot string) string {
 	return fmt.Sprintf("{{ctf:tick-%d}} {{ctf:%s}} pod-%d {{ctf:key-%d}}", i+1, slot, i, i+1)
 }
@@ -54,16 +54,38 @@ func bkFilled(i int, slot string) string {
 }
 
 // bkDoc is rdDoc with where's clues (editiontest.Clues), the time fillers tick-1 .. tick-7 of
-// window, the keys key-1 .. key-7, the path fillers pf-1 .. pf-7 when paths is set, and where's
+// window, the keys key-1 .. key-7 (bkSharedKeys: E2 holds the keys, at one word of every line of
+// the block, to one declaration), the path fillers pf-1 .. pf-7 when paths is set, and where's
 // group in a block of c.txt's lines 2 to 8 when blocked is set.
 func bkDoc(window string, blocked, paths bool) specDoc {
+	return bkDocKeys(window, blocked, paths, bkSharedKeys)
+}
+
+// bkOwnKeys is the vocabulary of key-j: 7 words of its own, so that no two keys of a seat meet.
+// It is for an edition WITHOUT the block only (E2 refuses keys declared otherwise at one word of
+// the lines of a block): a render whose keys are drawn as they come, and still differ.
+func bkOwnKeys(j int) string {
+	words := make([]string, 7)
+	for i := range words {
+		words[i] = fmt.Sprintf("k%d-%d", j, i)
+	}
+	return "[[" + strings.Join(words, ", ") + "]]"
+}
+
+// bkSharedKeys is the vocabulary of every key: editiontest.KeyVocab's 26 words (E2 (e5): at least
+// the block's 7 keys), so that keys drawn as they come meet in a seat, and the renderer has to
+// draw them apart.
+func bkSharedKeys(int) string { return editiontest.KeyVocab }
+
+// bkDocKeys is bkDoc with the vocabulary of key-j vocab(j).
+func bkDocKeys(window string, blocked, paths bool, vocab func(j int) string) specDoc {
 	d := rdDoc().with(slotWhere, func(s *specSlot) { s.clues = editiontest.Clues("where") })
 	if blocked {
 		d = d.withBlocks("[{file: " + bkFile + ", from: 2, to: 8}]")
 	}
 	for j := 1; j <= 7; j++ {
 		d = sbWithFillers(d, sbTick(fmt.Sprintf("tick-%d", j), window))
-		d = sbWithFillers(d, specSlot{name: fmt.Sprintf("key-%d", j), role: "filler", format: "name", vocab: "[[ka, kb, kc]]"})
+		d = sbWithFillers(d, specSlot{name: fmt.Sprintf("key-%d", j), role: "filler", format: "name", vocab: vocab(j)})
 		if paths {
 			d = sbWithFillers(d, specSlot{name: fmt.Sprintf("pf-%d", j), role: "filler", format: "path", vocab: specVocab("[opt]", "[y]", specWords("e", 10))})
 		}
@@ -286,7 +308,9 @@ func TestBlock_R1AnAssignmentBySlotIsRed(t *testing.T) {
 	if err := bkCheck(spec, tmpl, r.Bundles, bkAnswers(r)); err != nil {
 		t.Fatalf("the render with the block: %v", err)
 	}
-	_, _, bySlot := bkRender(t, bkDoc(bkDay, false, false), bkPlain, seats...)
+	// Without the block the keys are drawn as they come: of words of their own (bkOwnKeys), so they
+	// still differ, and the list holds the columns' meeting and no key's (B7's list is bounded).
+	_, _, bySlot := bkRender(t, bkDocKeys(bkDay, false, false, bkOwnKeys), bkPlain, seats...)
 	var ordered []*edition.Bundle
 	for _, b := range bySlot.Bundles {
 		block := bkBlock(t, b)
@@ -364,36 +388,164 @@ func TestBlock_O1O2AnUnorderedOrChangedBlockIsRed(t *testing.T) {
 	bkWantOne(t, bkCheck(spec, tmpl, []*edition.Bundle{bkWithBlock(own, word)}, answers), "seat-a", "signatures", r)
 }
 
-// V113 (o3): where a clue tells the lines apart, the answer on a decoy's line (the two values of
-// the column swapped, the times kept) is red; where no clue does, the same swap says nothing (the
-// two lines have one signature).
-// The (o3) before its replacement: PR 4c makes it the match of the key words (ADR-0056 amend. 31).
+// V113 (o3), as amendment 31 revised it (PR 4c): the answer on a decoy's line (the two values of
+// the column swapped, the times and the keys kept) is red, whether a word of the lines tells them
+// apart or not: the line that holds the answer has a decoy's key, not the key of the answer's clue
+// line. (The (o3) before PR 4c compared the signature of the answer's line, so the swap in lines
+// no clue word tells apart, the two-step shape, said nothing: that case was green, and is red now.)
+// The render itself is green.
 func TestBlock_O3TheAnswerOnADecoysLine(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		line bkLine
-		red  bool
 	}{
-		{"lines a clue tells apart", bkClued, true},
-		{"lines no clue tells apart", bkPlain, false},
+		{"lines a word tells apart", bkClued},
+		{"lines no word tells apart (the two-step shape)", bkPlain},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			spec, tmpl, r := bkRender(t, bkDoc(bkDay, true, false), c.line, "seat-a")
 			answers := bkAnswers(r)
 			own := rdBundle(t, r, "seat-a")
+			if err := bkCheck(spec, tmpl, []*edition.Bundle{own}, answers); err != nil {
+				t.Fatalf("B7 on the render: %v", err)
+			}
 			block := bkBlock(t, own)
 			at := bkRank(block, answers["seat-a"]["q2"])
 			other := (at + 1) % len(block)
 			block[at][1], block[other][1] = block[other][1], block[at][1]
 			err := bkCheck(spec, tmpl, []*edition.Bundle{bkWithBlock(own, block)}, answers)
-			if !c.red {
-				if err != nil {
-					t.Errorf("a swap that no signature shows: %v", err)
-				}
-				return
-			}
-			bkWantOne(t, err, "seat-a", "signature is not the one of the template's line of the answer", r)
+			bkWantOne(t, err, "seat-a", "has another key than the answer's clue line", r)
 		})
+	}
+}
+
+// bkFileLines is the lines of the file name of a bundle.
+func bkFileLines(t *testing.T, b *edition.Bundle, name string) []string {
+	t.Helper()
+	for _, f := range b.Files {
+		if f.Name == name {
+			return strings.Split(strings.TrimSuffix(string(f.Data), "\n"), "\n")
+		}
+	}
+	t.Fatalf("seat %s has no %s", b.Seat, name)
+	return nil
+}
+
+// bkWithFile is a copy of b with the file name's lines replaced: a bundle the renderer did not
+// make.
+func bkWithFile(b *edition.Bundle, name string, lines []string) *edition.Bundle {
+	out := &edition.Bundle{Seat: b.Seat, CID: b.CID}
+	for _, f := range b.Files {
+		if f.Name == name {
+			f = sbFile(name, lines)
+		}
+		out.Files = append(out.Files, f)
+	}
+	return out
+}
+
+// V113 (o3) (PR 4c, security's condition): the answer's clue line is found by the words of its
+// clue columns, not by its line number. A bundle with a second line of the clue lines' shape and
+// the answer's words (a decoy's clue line, its key kept, given them) is red, and so is one where no line has them (a word of the
+// answer's clue line changed); each is one violation, that names no value.
+func TestBlock_O3FindsTheAnswersClueLineByItsWords(t *testing.T) {
+	spec, tmpl, r := bkRender(t, bkDoc(bkDay, true, false), bkPlain, "seat-a")
+	answers := bkAnswers(r)
+	own := rdBundle(t, r, "seat-a")
+	k := bkFileLines(t, own, "k.txt")
+	w1, w2 := editiontest.ClueTuple("where", 0)
+	if len(k) != 7 || !strings.HasSuffix(k[0], " "+w1+" "+w2) {
+		t.Fatal("k.txt's first line is not the answer's clue line: the test does not test")
+	}
+	// The bundle keeps the template's number of tokens (B7 reads nothing else of the layout, and no
+	// literal outside the blocks, spread.go CheckDecoySpread): line 1's clue words made the answer's.
+	twice := slices.Clone(k)
+	fs := strings.Fields(twice[1])
+	fs[2], fs[3] = w1, w2
+	twice[1] = strings.Join(fs, " ")
+	bkWantOne(t, bkCheck(spec, tmpl, []*edition.Bundle{bkWithFile(own, "k.txt", twice)}, answers), "seat-a", "has 2 lines of the shape of the block's clue lines", r)
+	none := slices.Clone(k)
+	none[0] = strings.Replace(none[0], " "+w1+" ", " "+w1+"z ", 1)
+	bkWantOne(t, bkCheck(spec, tmpl, []*edition.Bundle{bkWithFile(own, "k.txt", none)}, answers), "seat-a", "has 0 lines of the shape of the block's clue lines", r)
+}
+
+// The keys (amendment 32, security's condition): each key of the block is on one line of the
+// block and on one clue line. The answer's key put on a decoy's line of the block too is red, and
+// so is the answer's key put on a decoy's clue line too (the answer's line and its clue line
+// still agree, so (o3) alone would pass both).
+func TestBlock_EachKeyIsOnOneLineOfTheBlockAndOneClueLine(t *testing.T) {
+	spec, tmpl, r := bkRender(t, bkDoc(bkDay, true, false), bkPlain, "seat-a")
+	answers := bkAnswers(r)
+	own := rdBundle(t, r, "seat-a")
+	block := bkBlock(t, own)
+	at := bkRank(block, answers["seat-a"]["q2"])
+	if at < 0 {
+		t.Fatal("the answer is not in the column")
+	}
+	dup := bkCopy(block)
+	dup[(at+1)%len(dup)][3] = block[at][3]
+	bkWantOne(t, bkCheck(spec, tmpl, []*edition.Bundle{bkWithBlock(own, dup)}, answers), "seat-a", "two lines of the block hold one key", r)
+
+	k := bkFileLines(t, own, "k.txt")
+	fs := strings.Fields(k[1])
+	fs[1] = strings.Fields(k[0])[1]
+	clues := slices.Clone(k)
+	clues[1] = strings.Join(fs, " ")
+	bkWantOne(t, bkCheck(spec, tmpl, []*edition.Bundle{bkWithFile(own, "k.txt", clues)}, answers), "seat-a", "two clue lines of the block's group hold one key", r)
+}
+
+// The renderer draws the keys of a block apart in a seat (amendment 32, PR 4c): with the 7 keys
+// of one vocabulary of 26 words, each of 30 seats rendered with the block has 7 keys that differ,
+// and B7 passes them. Rendered without the block, the same keys are drawn as they come, and a seat
+// has two lines with one key (the case tests something: 30 seats without a meeting would be a
+// chance below 1 in 10^11).
+func TestBlock_TheRenderDrawsTheKeysOfABlockApart(t *testing.T) {
+	seats := rdSeatNames(30)
+	spec, tmpl, r := bkRender(t, bkDocKeys(bkDay, true, false, bkSharedKeys), bkPlain, seats...)
+	for _, b := range r.Bundles {
+		keys := map[string]bool{}
+		for _, fs := range bkBlock(t, b) {
+			keys[fs[3]] = true
+		}
+		if len(keys) != 7 {
+			t.Errorf("seat %s: the 7 lines of the block have %d keys, want 7", b.Seat, len(keys))
+		}
+	}
+	if err := bkCheck(spec, tmpl, r.Bundles, bkAnswers(r)); err != nil {
+		t.Errorf("B7 on the render: %v", err)
+	}
+	_, _, plain := bkRender(t, bkDocKeys(bkDay, false, false, bkSharedKeys), bkPlain, seats...)
+	met := false
+	for _, b := range plain.Bundles {
+		keys := map[string]bool{}
+		for _, fs := range bkBlock(t, b) {
+			keys[fs[3]] = true
+		}
+		met = met || len(keys) < 7
+	}
+	if !met {
+		t.Error("without the block no seat has two lines with one key: the case does not show that the renderer draws the keys apart")
+	}
+}
+
+// E2 (e5) (amendment 32): keys of a vocabulary of 6 words for a block of 7 lines cannot be drawn
+// apart in a seat, so the edition is refused by E2, and the renderer refuses it with E2 before it
+// draws.
+func TestBlock_KeysOfASpaceBelowTheBlockAreRefused(t *testing.T) {
+	small := func(int) string { return "[[ka, kb, kc, kd, ke, kf]]" }
+	spec := rdSpec(t, bkDocKeys(bkDay, true, false, small))
+	tmpl := bkTemplate(spec, bkPlain)
+	v := sbWantOne(t, spec.CheckBlocksAndClues(demoCID, tmpl), edition.RuleSpecQuestion)
+	if !strings.Contains(v.Msg, "(e5)") {
+		t.Errorf("E2 = %v; want (e5)", v)
+	}
+	_, err := edition.Render(edition.RenderInput{
+		CID: demoCID, Questions: rdQuestions(), Spec: spec, Template: tmpl,
+		Key: rdKey(t, rdKeyText), Seats: []string{"seat-a"}, Previous: edition.NoPreviousSeats(),
+	})
+	specWantRules(t, err, edition.RuleSpecQuestion)
+	if wide := rdSpec(t, bkDocKeys(bkDay, true, false, bkSharedKeys)); wide.CheckBlocksAndClues(demoCID, bkTemplate(wide, bkPlain)) != nil {
+		t.Error("keys of 26 words for a block of 7 lines are refused")
 	}
 }
 

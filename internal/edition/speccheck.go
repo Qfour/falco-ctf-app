@@ -151,6 +151,33 @@ func checkFillerSpace(sl *Slot, at string, add func(rule, msg, qid, slot, at str
 	}
 }
 
+// fillerSpace is the number of values filler d draws from: its vocabulary's (VocabSpace) for a
+// name or a path, 16^length for a hexid, the seconds of its window for a timestamp (the params the
+// renderer draws it with, answerformat.Space). A filler that cannot be sized (not declared, no
+// window, a format the renderer does not draw) is an error. E2 (e5) reads it for the keys of a
+// block.
+func fillerSpace(d *Slot) (*big.Int, error) {
+	if d == nil {
+		return nil, errors.New("the filler is not declared")
+	}
+	var p answerformat.Params
+	switch d.Format {
+	case answerformat.HexID:
+		p.Length = d.Length
+	case answerformat.Timestamp:
+		if d.Window == nil || d.Window.From == nil || d.Window.To == nil {
+			return nil, errors.New("a timestamp filler has no window")
+		}
+		width := *d.Window.To - *d.Window.From
+		p.WindowSeconds = &width
+	}
+	n, err := answerformat.Space(d.Format, p)
+	if errors.Is(err, answerformat.ErrSpaceFromVocabulary) {
+		n, err = VocabSpace(d.Format, d.Vocab)
+	}
+	return n, err
+}
+
 // checkAnswerShape holds an answer slot's vocab and window to its question's format, which
 // the slot does not write (E2, ADR-0056 D10). It reports whether the slot can be sized.
 func checkAnswerShape(sl *Slot, q catalog.Question, at string, add func(rule, msg, qid, slot, at string, err error)) bool {

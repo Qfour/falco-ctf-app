@@ -67,7 +67,7 @@ func ccSpec(prefix, file string) string {
 	b.WriteString("  - name: peer\n    role: answer\n    question: q1\n    decoys: 9\n    clues: " + editiontest.Clues(prefix) + "\n    vocab:\n      - [" + strings.Join(words, ", ") + "]\n")
 	for j := 0; j <= 9; j++ {
 		fmt.Fprintf(&b, "  - {name: pt%d, role: filler, format: timestamp, window: {from: 10800, to: 14400}}\n", j)
-		fmt.Fprintf(&b, "  - {name: pk%d, role: filler, format: name, vocab: [[ka, kb, kc]]}\n", j)
+		fmt.Fprintf(&b, "  - {name: pk%d, role: filler, format: name, vocab: %s}\n", j, editiontest.KeyVocab)
 	}
 	fmt.Fprintf(&b, "blocks:\n  - {file: %s, from: 1, to: 10}\n", file)
 	return b.String()

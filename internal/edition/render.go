@@ -39,7 +39,10 @@ package edition
 // slot of a block differs from the other times of its block in the seat, drawn again within the
 // same budget. And once the marks are filled, the lines of the block are put in the strictly
 // ascending order of their times (orderBlocks), so the line of the answer is at no fixed place of
-// the block. An edition without blocks is drawn and written as before them, byte for byte.
+// the block. And (amendment 32, PR 4c) the keys of a block (the fillers a line of the block shares
+// with its clue line) are drawn apart in a seat, within the same budget, so each key is on one
+// line of the block and on one clue line (B7 checks it). An edition without blocks is drawn and
+// written as before them, byte for byte.
 //
 // The marks of a template and the rules that refuse a template are rendertemplate.go; their
 // lexer is slotmark.go (the one definition, shared with B4 and not a part of the renderer). How
@@ -305,7 +308,11 @@ func render(in RenderInput) (*Rendered, error) {
 	if err != nil {
 		return nil, newViolation(RuleSpecRender, "a block cannot be read as the lines of one group", 0, cell{cid: in.CID}, err)
 	}
-	plan := newBlockPlan(forms)
+	keys, err := in.Spec.keyBlocks(in.Template, forms)
+	if err != nil {
+		return nil, newViolation(RuleSpecRender, "the keys of a block cannot be read, so they cannot be drawn apart", 0, cell{cid: in.CID}, err)
+	}
+	plan := newBlockPlan(forms, keys)
 	tmpl.blocks = plan.byFile
 	var base time.Time
 	if in.Spec.Time.Base != "" {
@@ -409,17 +416,19 @@ func hasWords(vocab [][]string) bool {
 }
 
 // blockPlan is what the draws and the fill read of the blocks (ADR-0056 amendment 28, as
-// revised): the blocks of each file, the groups that are in a block, and for each time slot of a
-// block the other time slots of the blocks it is in. An edition without blocks has an empty plan,
-// and then nothing below reads it: its draws and its bytes are the ones of a render before blocks.
+// revised): the blocks of each file, the groups that are in a block, for each time slot of a
+// block the other time slots of the blocks it is in, and the block of each key of a block (keys,
+// amendment 32: keyBlocks). An edition without blocks has an empty plan, and then nothing below
+// reads it: its draws and its bytes are the ones of a render before blocks.
 type blockPlan struct {
 	byFile  map[string][]blockForm
 	blocked map[string]bool
 	mates   map[string][]string
+	keys    map[string]int
 }
 
-func newBlockPlan(forms []blockForm) blockPlan {
-	p := blockPlan{byFile: map[string][]blockForm{}, blocked: map[string]bool{}, mates: map[string][]string{}}
+func newBlockPlan(forms []blockForm, keys map[string]int) blockPlan {
+	p := blockPlan{byFile: map[string][]blockForm{}, blocked: map[string]bool{}, mates: map[string][]string{}, keys: keys}
 	for _, f := range forms {
 		p.byFile[f.file] = append(p.byFile[f.file], f)
 		p.blocked[f.group] = true
@@ -460,13 +469,22 @@ func groupPosition(group string) string { return group + "/" }
 // it adds this seat's values to). For a group in a block (r1), the position is the group: each of
 // its slots differs from the values the earlier seats got in ANY slot of the group, so the column
 // of the block holds no value of another seat's column. A time slot of a block (r2) is also drawn
-// to differ from the times of the other lines of its blocks that are drawn already. A filler is
-// otherwise drawn as it comes.
+// to differ from the times of the other lines of its blocks that are drawn already. A key of a
+// block (amendment 32) is drawn to differ from the other keys of its block in this seat (one seen
+// set per block; between seats a key is not assigned, as a filler is not). Any other filler is
+// drawn as it comes.
 func drawSeat(in RenderInput, slots []*renderSlot, base time.Time, seat string, earlier map[string]map[string]struct{}, plan blockPlan) (map[string]string, error) {
 	values := make(map[string]string, len(slots))
 	taken := make(map[string]map[string]struct{})
+	keysTaken := make(map[int]map[string]struct{})
 	for _, s := range slots {
 		var seen, before map[string]struct{}
+		if b, ok := plan.keys[s.name]; ok && s.group == "" {
+			if keysTaken[b] == nil {
+				keysTaken[b] = make(map[string]struct{})
+			}
+			seen = keysTaken[b]
+		}
 		if s.group != "" {
 			if taken[s.group] == nil {
 				taken[s.group] = make(map[string]struct{})
@@ -511,7 +529,9 @@ func (s *renderSlot) drawDistinct(d *drbg, base time.Time, seen, before map[stri
 // fail-closed). With avoid nil it is drawDistinct exactly (the same draws, the same value). The
 // budget holds for the two together: a time slot of a block is either a slot of the block's group
 // (then avoid is the values of the group in this seat, which seen holds already, so it rejects
-// nothing more) or a filler (then seen and before are nil, and avoid holds at most k values).
+// nothing more) or a filler (then before is nil, and avoid holds at most k values; seen is nil, or
+// the keys of its block drawn already when the time slot is a key too, amendment 32). A key's seen
+// holds fewer values than the key's space, which E2 (e5) holds to the block's number of keys.
 func (s *renderSlot) drawAvoiding(d *drbg, base time.Time, seen, before, avoid map[string]struct{}) (string, error) {
 	for try := 0; try < maxDistinctTries; try++ {
 		v, err := s.draw(d, base)

@@ -200,10 +200,11 @@ func SpecText(nameWords, decoys int) string {
 		}
 	}
 	// The key of each line of every group: the filler its line and its clue line share
-	// (ADR-0056 amendment 31, E2 (e2)).
+	// (ADR-0056 amendment 31, E2 (e2)), of KeyVocab (E2 (e5), amendment 32: the keys of a block
+	// draw from at least as many words as the block has keys, so the renderer draws them apart).
 	for _, g := range Groups {
 		for j := 0; j <= decoys; j++ {
-			fmt.Fprintf(&b, "  - {name: %s-k%d, role: filler, format: name, vocab: [[ka, kb, kc]]}\n", g, j)
+			fmt.Fprintf(&b, "  - {name: %s-k%d, role: filler, format: name, vocab: %s}\n", g, j, KeyVocab)
 		}
 	}
 	// One block per group (ADR-0056 amendment 28, B17): blocks is the last key, so a case can add
@@ -215,6 +216,12 @@ func SpecText(nameWords, decoys int) string {
 	}
 	return b.String()
 }
+
+// KeyVocab is the vocabulary of the keys of the fixtures' blocks (the fillers a line of a block
+// shares with its clue line): 26 words, so a block of up to 26 lines holds to E2 (e5) (ADR-0056
+// amendment 32), and the renderer has words left to draw the keys of a block apart. The words are
+// no hexid and no time, so they count for no question but a name's.
+const KeyVocab = "[[ka, kb, kc, kd, ke, kf, kg, kh, ki, kj, kk, kl, km, kn, ko, kp, kq, kr, ks, kt, ku, kv, kw, kx, ky, kz]]"
 
 // Groups are the answer slots of the event edition, in the order of their blocks in the template.
 var Groups = []string{"who", "where", "tag", "when"}
