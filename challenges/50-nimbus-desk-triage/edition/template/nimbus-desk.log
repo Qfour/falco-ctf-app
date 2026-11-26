@@ -6,22 +6,28 @@
 2026-10-21T16:07:51Z level=info msg="request" method=POST path=/api/tickets status=201 client=198.51.100.71 dur_ms=42
 2026-10-21T16:10:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
 2026-10-21T16:12:09Z level=info msg="attachment stored" ticket=T-48813 bytes=2304
+2026-10-21T16:15:12Z level=warn msg="request" method=POST path=/api/attachments/preview status=500 client=203.0.113.9 dur_ms=2140
 2026-10-21T16:15:36Z level=info msg="request" method=GET path=/api/tickets/T-48790 status=200 client=198.51.100.44 dur_ms=11
+2026-10-21T16:15:40Z level=error msg="preview render failed" job=pv-88117 err="renderer timeout"
+2026-10-21T16:16:03Z level=warn msg="request" method=POST path=/api/attachments/preview status=500 client=203.0.113.9 dur_ms=2206
+2026-10-21T16:17:18Z level=warn msg="request" method=POST path=/api/attachments/preview status=500 client=203.0.113.9 dur_ms=1987
+2026-10-21T16:18:44Z level=warn msg="request" method=POST path=/api/attachments/preview status=500 client=203.0.113.9 dur_ms=2311
+2026-10-21T16:19:27Z level=error msg="preview render failed" job=pv-88121 err="renderer timeout"
 2026-10-21T16:20:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
+2026-10-21T16:21:49Z level=warn msg="request" method=POST path=/api/attachments/preview status=500 client=203.0.113.9 dur_ms=2057
+2026-10-21T16:23:22Z level=info msg="request" method=POST path=/api/tickets/T-48801/comments status=201 client=198.51.100.71 dur_ms=37
+2026-10-21T16:24:10Z level=info msg="mail queued" ticket=T-48801 to_domain=customer.example relay=smtp.mail.example
 2026-10-21T16:24:58Z level=info msg="request" method=GET path=/static/js/desk.js status=304 client=198.51.100.130 dur_ms=2
-2026-10-21T16:29:13Z level=info msg="webhook sent" target=hooks.partner.example event=ticket.updated status=200
-2026-10-21T16:30:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
-2026-10-21T16:35:22Z level=info msg="request" method=POST path=/api/tickets/T-48801/comments status=201 client=198.51.100.71 dur_ms=37
-2026-10-21T16:40:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
-2026-10-21T16:43:10Z level=info msg="mail queued" ticket=T-48801 to_domain=customer.example relay=smtp.mail.example
-2026-10-21T16:50:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
-2026-10-21T16:53:31Z level=info msg="request" method=GET path=/api/tickets status=200 client=198.51.100.44 dur_ms=16
-2026-10-21T16:55:12Z level=warn msg="request" method=POST path=/api/attachments/preview status=500 client=203.0.113.9 dur_ms=2140
-2026-10-21T16:55:40Z level=error msg="preview render failed" job=pv-88117 err="renderer timeout"
-2026-10-21T16:56:03Z level=warn msg="request" method=POST path=/api/attachments/preview status=500 client=203.0.113.9 dur_ms=2206
-2026-10-21T16:57:18Z level=warn msg="request" method=POST path=/api/attachments/preview status=500 client=203.0.113.9 dur_ms=1987
-2026-10-21T16:58:44Z level=warn msg="request" method=POST path=/api/attachments/preview status=500 client=203.0.113.9 dur_ms=2311
-2026-10-21T16:59:27Z level=error msg="preview render failed" job=pv-88121 err="renderer timeout"
+2026-10-21T16:26:21Z level=info msg="request" method=GET path=/api/tickets status=200 client=198.51.100.44 dur_ms=16
+2026-10-21T16:26:52Z level=warn msg="request" method=POST path=/api/attachments/preview status=500 client=203.0.113.9 dur_ms=2198
+2026-10-21T16:27:13Z level=info msg="webhook sent" target=hooks.partner.example event=ticket.updated status=200
+{{ctf:q1w-health-1}} level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
+{{ctf:q1w-preview-a}} level=warn msg="request" method=POST path=/api/attachments/preview status=500 client=203.0.113.9 dur_ms=2242
+{{ctf:q1w-health-2}} level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
+{{ctf:q1w-preview-b}} level=warn msg="request" method=POST path=/api/attachments/preview status=200 client=203.0.113.9 dur_ms=2980
+{{ctf:q1w-render-f}} level=error msg="preview render failed" job=pv-88122 err="renderer timeout"
+{{ctf:q1w-health-3}} level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
+{{ctf:q1w-preview-c}} level=warn msg="request" method=POST path=/api/attachments/preview status=500 client=203.0.113.9 dur_ms=2105
 {{ctf:q1w-health}} level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
 {{ctf:q1w-preview-1}} level=warn msg="request" method=POST path=/api/attachments/preview status=500 client=203.0.113.9 dur_ms=2264
 {{ctf:q1w-attach-1}} level=info msg="attachment stored" ticket=T-48814 bytes=12288

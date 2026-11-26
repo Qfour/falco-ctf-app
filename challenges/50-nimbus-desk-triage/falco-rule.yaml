@@ -15,10 +15,12 @@ investigate:
     mountDir: /srv/ir/evidence
   questions:
     # Q1 (per seat): the time Falco first recorded a shell under the web service process.
+    # The window is 2520 s = 2 x 60 seats x 21 (the answer and K = 20 decoys of the block of a
+    # later PR; ADR-0056 B8 (a2) and amendment 29): no fixed time of the incident lies in it (B16).
     - id: first-shell
       format: timestamp
       attempts: 5
-      params: {windowSeconds: 600}
+      params: {windowSeconds: 2520}
     # Q2 (per seat): the credential file that was read (besides the config file).
     - id: cred-file
       format: path
